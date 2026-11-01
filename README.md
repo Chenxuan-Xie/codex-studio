@@ -2,6 +2,9 @@
 
 本地可视化编排工作台：**Codex/DSH Planner + Codex/DSH/API Worker**。
 
+GitHub: <https://github.com/Chenxuan-Xie/codex-studio>  
+Release: <https://github.com/Chenxuan-Xie/codex-studio/releases/tag/v0.1.0>
+
 它解决的是：
 
 ```text
@@ -234,6 +237,7 @@ DSH 的 API key 存在它自己的 `.credentials.yaml` 的 `refs` 中。Codex St
 - 不支持给每个 Codex Worker 单独绑定不同 Codex 账号。
 - 现有 Codex Worker 没有 worktree 隔离；多个 Worker 写同一项目时需要自己保证任务范围互斥。
 - DSH 对话通过 ACP 接管；同一时刻一个 DSH 会话只能被一个写入者持有。正在 DSH 客户端打开的会话可能不能同时作为 Worker。
+- Windows 下 DSH 的 shell 工具需要工作区 ACL 允许当前用户配置沙箱；本机已修复并保留恢复文件在 `data/acl-recovery`，其他机器可能需要同样处理。
 - API Worker 的 worktree 只支持 clean Git 项目。
 - API 模型列表目前写在 `config.json`，还没有做可视化编辑。
 - 读取 Codex 本地 SQLite；Codex 大版本升级后可能需要适配。
