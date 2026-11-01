@@ -1088,11 +1088,14 @@ def run_dsh_acp_worker(
             "session_id": session_id,
         }
     except Exception as exc:
+        message = str(exc)
+        if "active write handle" in message or "already owned" in message:
+            message = "DSH 会话正在被 DSH 客户端占用；请关闭该对话或换一个 DSH 对话后重试。原始错误：" + message
         return {
             "status": "failed",
             "text": "",
             "parsed": None,
-            "error": str(exc),
+            "error": message,
             "stderr_tail": tail("\n".join(client.stderr_tail if client else []), 4000),
             "elapsed_seconds": round(time.time() - started, 1),
             "session_id": session_id,
