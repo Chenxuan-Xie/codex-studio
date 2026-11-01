@@ -231,6 +231,21 @@ D:\CodexStudio\
   data\runs\             # 运行记录、模型 patch、worktree
 ```
 
+## GitHub 发布
+
+仓库已经初始化并提交了干净的源码。GitHub 发布只需要一个空仓库地址：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File D:\CodexStudio\publish.ps1 `
+  -RepoUrl https://github.com/YOUR_NAME/codex-studio.git
+```
+
+如果本机没有 GitHub 凭据，先在 Git Credential Manager 或 GitHub CLI 登录。源码包也已生成：
+
+```text
+D:\CodexStudio\dist\codex-studio-0.1.0.zip
+```
+
 ## 后续扩展
 
 - 可视化编辑 API 模型/API key 引用；
