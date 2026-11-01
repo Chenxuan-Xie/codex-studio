@@ -1,0 +1,2 @@
+# Codex Studio intentionally has no Python third-party dependencies.
+# Python 3.7+ standard library only.

@@ -1,0 +1,33 @@
+{
+  "host": "127.0.0.1",
+  "port": 7788,
+  "codex_home": "D:\\Codex\\home",
+  "codex_exe": "",
+  "dsh_home": "D:\\AgentOrchestrator\\dsh-home",
+  "dsh_profile": "headless",
+  "dsh_chat_home": "C:\\Users\\YOUR_NAME\\.dsh",
+  "dsh_chat_profile": "acp",
+  "dsh_node": "node",
+  "dsh_entry": "D:\\AgentOrchestrator\\npm-global\\node_modules\\@deepseek-ai\\dsh\\lib\\bin.js",
+  "data_dir": "D:\\CodexStudio\\data",
+  "max_parallel": 3,
+  "planner_timeout_minutes": 90,
+  "api_models": [
+    {
+      "id": "workbuddy-deepseek",
+      "name": "WorkBuddy / DeepSeek V4.1 Flash",
+      "provider": "workbuddy",
+      "model": "cn:deepseek-v4.1-flash",
+      "tier": "standard",
+      "strengths": ["代码", "中文", "长上下文", "低成本"]
+    },
+    {
+      "id": "siliconflow-deepseek",
+      "name": "SiliconFlow / DeepSeek V4.1 Flash",
+      "provider": "siliconflow",
+      "model": "deepseek-ai/DeepSeek-V4.1-Flash",
+      "tier": "standard",
+      "strengths": ["代码", "长上下文", "视觉"]
+    }
+  ]
+}

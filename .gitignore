@@ -1,0 +1,10 @@
+# Local machine configuration and runtime state
+config.json
+data/
+*.pyc
+__pycache__/
+.pytest_cache/
+.env
+.env.*
+.DS_Store
+Thumbs.db

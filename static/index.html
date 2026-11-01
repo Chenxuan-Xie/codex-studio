@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Codex Studio</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div id="app">
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-mark">CS</div>
+      <div>
+        <div class="brand-name">Codex Studio</div>
+        <div class="brand-sub">Planner + Workers, local first</div>
+      </div>
+    </div>
+    <div class="topbar-center">
+      <button class="icon-btn" id="backToSetup" title="新建运行">＋</button>
+      <div class="crumb">
+        <span class="crumb-label">项目</span>
+        <span id="topProject">未选择</span>
+      </div>
+    </div>
+    <div class="topbar-actions">
+      <span class="status-dot" id="serverDot"></span>
+      <span class="server-label" id="serverLabel">本地</span>
+      <button class="icon-btn" id="themeBtn" title="切换主题">◐</button>
+      <button class="icon-btn" id="refreshBtn" title="刷新">↻</button>
+    </div>
+  </header>
+
+  <div class="workspace">
+    <aside class="sidebar">
+      <div class="sidebar-head">
+        <div class="sidebar-title">项目</div>
+        <div class="sidebar-count" id="projectCount">0</div>
+      </div>
+      <div class="search-wrap">
+        <span class="search-icon">⌕</span>
+        <input id="projectSearch" class="search-input" placeholder="搜索项目或路径">
+      </div>
+      <div id="projectList" class="project-list"></div>
+
+      <div class="sidebar-head history-head">
+        <div class="sidebar-title">运行记录</div>
+      </div>
+      <div id="runList" class="run-list"></div>
+
+      <div class="sidebar-foot">
+        <div class="foot-line"><span class="status-dot good"></span> Codex home</div>
+        <div class="foot-path" id="codexHome">-</div>
+        <div class="foot-line" style="margin-top:10px"><span class="status-dot good"></span> 数据目录</div>
+        <div class="foot-path" id="dataDir">-</div>
+      </div>
+    </aside>
+
+    <main class="main" id="main">
+      <div class="empty-state">
+        <div class="empty-mark">CS</div>
+        <h1>选择一个项目开始</h1>
+        <p>左侧选择 Codex 项目，指定一个现有对话作为 Planner，再配置 Worker。</p>
+      </div>
+    </main>
+
+    <aside class="inspector" id="inspector">
+      <div class="inspector-head">
+        <div class="eyebrow">运行信息</div>
+        <h3 id="inspectorTitle">还没有运行</h3>
+      </div>
+      <div id="inspectorBody" class="inspector-body">
+        <div class="hint-card">
+          <div class="hint-title">工作方式</div>
+          <p>Planner 使用你选中的 Codex 对话和该对话的模型。API Worker 在独立进程中运行，使用 DSH + 你授权的 API。</p>
+        </div>
+      </div>
+    </aside>
+  </div>
+</div>
+<div id="toast" class="toast"></div>
+<script src="/static/app.js"></script>
+</body>
+</html>
