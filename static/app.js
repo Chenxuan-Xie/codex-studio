@@ -888,10 +888,11 @@
       <textarea id="plannerNote" class="goal-input" placeholder="例如：前面的规划是……；两个任务已经在执行，请把 X 交给 Y，不要重复启动。"></textarea>
       <div class="continue-foot"><span>${esc((run.planner_notes || []).length)} 条待读</span><button id="addPlannerNote" class="secondary-btn">留给 Planner</button></div>
     </div>` : "";
-    const interruptedTasks = (run.tasks || []).filter((t) => ["failed", "blocked", "stopped", "interrupted"].includes(t.status));
+    const latestRound = Math.max(0, ...(run.tasks || []).map((t) => Number(t.round) || 0));
+    const interruptedTasks = (run.tasks || []).filter((t) => Number(t.round) === latestRound && ["failed", "blocked", "stopped", "interrupted"].includes(t.status));
     const resumeHtml = interruptedTasks.length && !["running", "stopping", "paused"].includes(run.status) ? `<div class="continue-panel resume-panel">
       <div class="continue-head"><div><div class="panel-title">恢复中断的任务</div><div class="panel-sub">只重跑失败、阻塞或停止的任务，不碰已完成的对话；完成后交给 Planner 检查。</div></div><span class="badge">${interruptedTasks.length} 个中断</span></div>
-      <div class="resume-note">已发出的任务会发送续跑指令：“前面因为额度问题中断，现在继续前面的任务……”；完全没有发出的任务会重发原始提示词，不会错误地续跑空对话。</div>
+      <div class="resume-note">已发出的任务会发送续跑指令：“前面因为额度问题中断，现在继续前面的任务。”；完全没有发出的任务会重发原始提示词，不会错误地续跑空对话。</div>
       <div class="continue-foot"><span>${interruptedTasks.map((t) => esc(t.worker)).join(" · ")}</span><button id="resumeInterruptedBtn" class="primary-btn">恢复中断任务</button></div>
     </div>` : "";
     $("#main").innerHTML = `

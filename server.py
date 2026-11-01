@@ -1846,10 +1846,7 @@ class Orchestrator:
         ]
         if not candidates:
             raise StudioError("没有可恢复的中断任务")
-        note = (message or "").strip() or (
-            "前面因为额度问题中断，现在继续前面的任务。先检查你已经完成的部分，"
-            "不要重复已完成的写入；从中断点继续，保持原有验收标准，完成后按原协议报告。"
-        )
+        note = (message or "").strip() or "前面因为额度问题中断，现在继续前面的任务。"
         resend_count = 0
         continue_count = 0
         for task in candidates:
