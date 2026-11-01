@@ -20,6 +20,7 @@ Date: 2026-11-01
 - New Codex conversation — created `worker1` with `gpt-6.1-sol` / `low`, replied `READY`, and wrote the Codex thread name.
 - `POST /api/conversations` — created `worker-http-test` through the HTTP route with model/effort and initial prompt, then deleted the test thread.
 - Run continuation — a completed state with round 1 was appended 2 rounds through `Orchestrator.continue_run`; state moved to round 2 / max 3 with the追加要求 in the goal.
+- Run continuation UI — a saved completed record opened with the “继续这个记录” composer, rounds field and append button.
 - Windows desktop shell — generic Electron launched with `CodexStudio.exe`, started its bundled Python backend on an available local port, and opened the app window.
 - Windows portable zip — 494 MB folder packed to `CodexStudio-0.1.0-win-x64.zip` (186 MB) and verified to launch.
 - Windows setup executable — IExpress package installed to `D:\CodexStudioApp` and launched `Codex Studio`.
