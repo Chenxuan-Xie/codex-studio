@@ -205,6 +205,8 @@ DSH 的 API key 存在它自己的 `.credentials.yaml` 的 `refs` 中。Codex St
 
 勾选 worktree 要求项目当前是 clean 的；否则该任务会失败并提示先提交或关闭 worktree。
 
+本地测试记录见 [TESTING.md](TESTING.md)。
+
 ## 当前限制
 
 - Codex Planner 的账号切换是**手动**的，不做自动轮换。
