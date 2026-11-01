@@ -17,6 +17,12 @@
     dshSeq: 0,
     apiWorkers: [],
     apiSeq: 0,
+    plannerCreateOpen: false,
+    plannerTab: "codex",
+    plannerKind: "codex",
+    plannerDshId: null,
+    codexCreateOpen: false,
+    dshCreateOpen: false,
     goal: "",
     maxRounds: 5,
     view: "setup",
@@ -186,6 +192,12 @@
     state.threads = [];
     state.plannerId = null;
     state.selectedCodex = new Set();
+    state.plannerKind = "codex";
+    state.plannerDshId = null;
+    state.plannerTab = "codex";
+    state.plannerCreateOpen = false;
+    state.codexCreateOpen = false;
+    state.dshCreateOpen = false;
     state.dshSessions = [];
     state.dshWorkers = [];
     state.dshSeq = 0;
@@ -267,6 +279,15 @@
     return state.threads.find((t) => t.id === state.plannerId) || null;
   }
 
+  function plannerSelection() {
+    if (state.plannerKind === "dsh" && state.plannerDshId) {
+      const s = state.dshSessions.find((x) => x.session_id === state.plannerDshId);
+      return s ? { kind: "dsh", session: s, title: s.title, model: s.model, cwd: s.cwd } : null;
+    }
+    const t = plannerThread();
+    return t ? { kind: "codex", thread: t, title: t.name || t.title, model: t.model, cwd: t.cwd } : null;
+  }
+
   function workerThreads() {
     return state.threads.filter((t) => t.id !== state.plannerId);
   }
@@ -279,6 +300,128 @@
     return apiModel().find((m) => m.id === id) || null;
   }
 
+  function nextWorkerName() {
+    const used = new Set([
+      ...state.threads.map((t) => (t.name || "").toLowerCase()),
+      ...state.dshSessions.map((s) => (s.title || "").toLowerCase()),
+      ...state.dshWorkers.map((w) => (w.name || "").toLowerCase()),
+    ]);
+    let i = 1;
+    while (used.has(`worker${i}`)) i += 1;
+    return `worker${i}`;
+  }
+
+  function optionsHtml(values, selected) {
+    return values.map((v) => `<option value="${esc(v)}" ${v === selected ? "selected" : ""}>${esc(v)}</option>`).join("");
+  }
+
+  function effortOptions(selected = "high") {
+    const values = (state.bootstrap && state.bootstrap.config && state.bootstrap.config.reasoning_efforts) || ["low", "medium", "high", "max"];
+    return optionsHtml(values, selected);
+  }
+
+  function codexModelOptions(selected) {
+    const values = (state.bootstrap && state.bootstrap.config && state.bootstrap.config.codex_models) || ["gpt-6.1-sol"];
+    return optionsHtml(values, selected || values[0]);
+  }
+
+  function dshModelOptions(selected) {
+    return apiModel().map((m) => `<option value="${esc(m.id)}" ${m.id === selected ? "selected" : ""}>${esc(m.name)}</option>`).join("");
+  }
+
+  function createForm(kind, role, name, modelControl, prompt) {
+    const isPlanner = role === "planner";
+    return `<div class="create-form">
+      <div class="form-title">${isPlanner ? "新建 Planner 对话" : "新建 Worker 对话"}</div>
+      <div class="form-sub">先创建并命名这个对话；初始化 prompt 会作为它的第一条消息。</div>
+      <div class="form-grid">
+        <label class="field"><span>名称</span><input id="createName" value="${esc(name)}"></label>
+        <label class="field"><span>模型</span>${modelControl}</label>
+        <label class="field"><span>Effort</span><select id="createEffort">${effortOptions("high")}</select></label>
+      </div>
+      <label class="field full"><span>初始化 Prompt</span><textarea id="createPrompt" rows="4">${esc(prompt)}</textarea></label>
+      <div class="form-actions"><button class="secondary-btn" data-cancel-create="${kind}">取消</button><button class="primary-btn" data-create-kind="${kind}" data-create-role="${role}">创建并使用</button></div>
+    </div>`;
+  }
+
+  async function reloadThreads() {
+    if (!state.project) return;
+    const projectRef = state.project.id || state.project.path;
+    const data = await api("/api/threads?project=" + encodeURIComponent(projectRef));
+    state.threads = data.threads || [];
+  }
+
+  async function reloadDshSessions() {
+    if (!state.project) return;
+    const projectRef = state.project.id || state.project.path;
+    const data = await api("/api/dsh-sessions?project=" + encodeURIComponent(projectRef));
+    state.dshSessions = data.sessions || [];
+  }
+
+  async function createConversation(kind, role) {
+    const name = ($("#createName") && $("#createName").value || "").trim();
+    const prompt = ($("#createPrompt") && $("#createPrompt").value || "").trim();
+    const effort = ($("#createEffort") && $("#createEffort").value) || "high";
+    if (!name) return toast("给这个对话起一个名字");
+    let payload = {
+      kind,
+      role,
+      project_id: state.project.id || "",
+      project_path: state.project.path,
+      name,
+      effort,
+      init_prompt: prompt,
+    };
+    if (kind === "codex") {
+      payload.model = ($("#createModel") && $("#createModel").value) || "gpt-6.1-sol";
+    } else {
+      payload.model_id = ($("#createModel") && $("#createModel").value) || "";
+    }
+    const btn = $(`[data-create-kind="${kind}"][data-create-role="${role}"]`);
+    if (btn) { btn.disabled = true; btn.textContent = "创建中..."; }
+    try {
+      const conv = await api("/api/conversations", { method: "POST", body: JSON.stringify(payload) });
+      if (kind === "codex") {
+        await reloadThreads();
+        if (role === "planner") {
+          state.plannerId = conv.thread_id || conv.id;
+          state.plannerKind = "codex";
+          state.plannerDshId = null;
+          state.plannerTab = "codex";
+          state.plannerCreateOpen = false;
+        } else {
+          state.selectedCodex.add(conv.thread_id || conv.id);
+          state.codexCreateOpen = false;
+        }
+      } else {
+        await reloadDshSessions();
+        if (role === "planner") {
+          state.plannerKind = "dsh";
+          state.plannerDshId = conv.session_id || conv.id;
+          state.plannerId = null;
+          state.plannerTab = "dsh";
+          state.plannerCreateOpen = false;
+        } else {
+          state.dshWorkers.push({
+            key: `dsh-${Date.now()}`,
+            name: conv.name || name,
+            session_id: conv.session_id || conv.id,
+            title: conv.name || name,
+            cwd: conv.cwd,
+            provider: conv.provider,
+            model: conv.model,
+          });
+          state.dshCreateOpen = false;
+        }
+      }
+      toast(`已创建对话：${conv.name || name}`);
+      renderSetup();
+    } catch (err) {
+      toast(err.message);
+      if (btn) { btn.disabled = false; btn.textContent = "创建并使用"; }
+    }
+  }
+
   function renderSetup() {
     state.view = "setup";
     const p = state.project;
@@ -287,7 +430,7 @@
       return;
     }
     $("#topProject").textContent = p.name || p.path;
-    const planner = plannerThread();
+    const planner = plannerSelection();
     const threads = state.threads;
     const selectedExisting = workerThreads().filter((t) => state.selectedCodex.has(t.id));
     const apiCards = apiModel().map((m) => `<div class="api-card">
@@ -333,6 +476,17 @@
         </span>
       </button>`;
     }).join("") || `<div class="empty-mini">没有找到顶层对话。</div>`;
+    const dshPlannerHtml = state.dshSessions.map((s) => {
+      const selected = state.plannerKind === "dsh" && state.plannerDshId === s.session_id;
+      return `<button class="thread-card ${selected ? "selected" : ""}" data-planner-dsh="${esc(s.session_id)}">
+        <span class="radio"></span>
+        <span class="thread-body">
+          <span class="thread-title" title="${esc(s.title)}">${esc(short(s.title, 62))}</span>
+          <span class="thread-meta"><span class="badge mono">${esc(s.model || "DSH 默认")}</span><span class="badge">${esc(s.provider || "DSH")}</span><span class="badge">${esc(s.turns || 0)} 轮</span></span>
+          <span class="thread-preview">${esc(short(s.cwd, 100))}</span>
+        </span>
+      </button>`;
+    }).join("") || `<div class="empty-mini">这个项目没有可用的 DSH 对话。</div>`;
     const selectedApi = state.apiWorkers.map((w) => {
       const m = selectedApiModel(w.model_id);
       return `<div class="worker-chip" data-api-key="${esc(w.key)}">
@@ -348,16 +502,28 @@
         <div>
           <div class="setup-eyebrow">New orchestration</div>
           <h1 class="setup-title">从项目到任务，交给 Planner</h1>
-          <p class="setup-sub">选一个现有 Codex 对话作为 Planner，它会使用该对话当前的模型和上下文。Worker 可以是项目里的现有对话，也可以是新的 DSH/API worker。</p>
+          <p class="setup-sub">先选择项目，再选择或新建 Planner。Planner 与 Worker 都可以来自 Codex 或 DSH；新建时指定名称、模型、effort 和初始化 Prompt。</p>
         </div>
         <div class="project-chip"><span>▣</span><span>${esc(p.path)}</span></div>
       </div>
       <div class="section">
         <div class="section-head">
-          <div class="section-title-wrap"><div class="step-num">1</div><div><div class="section-title">选择 Planner 对话</div><div class="section-sub">使用该对话的模型与上下文；账号切换在 Codex 里完成，应用继续同一个 thread。</div></div></div>
-          ${planner ? `<span class="badge mono">${esc(planner.model || "thread 默认模型")}</span>` : ""}
+          <div class="section-title-wrap"><div class="step-num">1</div><div><div class="section-title">选择 Planner 对话</div><div class="section-sub">选择现有对话，或新建一个带模型与 effort 的 Planner。</div></div></div>
+          <div class="head-actions">
+            ${planner ? `<span class="badge mono">${esc(planner.model || "默认模型")}</span>` : ""}
+            <button class="secondary-btn" id="openPlannerCreate">${state.plannerCreateOpen ? "取消新建" : "＋ 新建对话"}</button>
+          </div>
         </div>
-        <div class="section-body"><div class="thread-list">${plannerHtml}</div></div>
+        <div class="section-body">
+          <div class="tabs planner-tabs">
+            <button class="tab ${state.plannerTab === "codex" ? "active" : ""}" data-planner-tab="codex">Codex 对话</button>
+            <button class="tab ${state.plannerTab === "dsh" ? "active" : ""}" data-planner-tab="dsh">DSH 对话</button>
+          </div>
+          ${state.plannerCreateOpen ? (state.plannerTab === "dsh"
+            ? createForm("dsh", "planner", "planner", `<select id="createModel">${dshModelOptions("workbuddy-deepseek")}</select>`, "你是 Codex Studio 的统筹 Planner。你负责验收交付、规划下一轮任务、给 Worker 明确验收标准。先只确认角色并回复 READY，不要执行项目任务。")
+            : createForm("codex", "planner", "planner", `<select id="createModel">${codexModelOptions("gpt-6.1-sol")}</select>`, "你是 Codex Studio 的统筹 Planner。你负责验收交付、规划下一轮任务、给 Worker 明确验收标准。先只确认角色并回复 READY，不要执行项目任务。")) : ""}
+          <div class="thread-list">${state.plannerTab === "dsh" ? dshPlannerHtml : plannerHtml}</div>
+        </div>
       </div>
       <div class="section">
         <div class="section-head">
@@ -370,11 +536,15 @@
         </div>
         <div class="section-body">
           <div class="tab-panel ${state.tab === "codex" ? "active" : ""}" id="tabCodex">
+            <div class="worker-tab-tools"><span>选择现有 Codex 对话，或者新建一个 workerX。</span><button class="secondary-btn" id="openCodexCreate">${state.codexCreateOpen ? "取消新建" : "＋ 新建 Codex 对话"}</button></div>
+            ${state.codexCreateOpen ? createForm("codex", "worker", nextWorkerName(), `<select id="createModel">${codexModelOptions("gpt-6.1-sol")}</select>`, `你是 ${nextWorkerName()}，负责执行 Codex Studio 分配的任务。先只确认角色并回复 READY，不要执行项目任务。`) : ""}
             <div class="thread-list">${existingHtml}</div>
             ${selectedExisting.length ? `<div class="selected-workers">${existingNames}</div>` : ""}
           </div>
           <div class="tab-panel ${state.tab === "dsh" ? "active" : ""}" id="tabDsh">
             <div class="notice info">DSH Worker 会继续你选中的 DeepSeek Harness 原会话，不会新建一次性 headless 会话。若该对话正在 DSH 客户端里执行，ACP 会提示被占用。</div>
+            <div class="worker-tab-tools"><span>选择现有 DSH 对话，或者新建一个 workerX。</span><button class="secondary-btn" id="openDshCreate">${state.dshCreateOpen ? "取消新建" : "＋ 新建 DSH 对话"}</button></div>
+            ${state.dshCreateOpen ? createForm("dsh", "worker", nextWorkerName(), `<select id="createModel">${dshModelOptions("workbuddy-deepseek")}</select>`, `你是 ${nextWorkerName()}，负责执行 Codex Studio 分配的任务。先只确认角色并回复 READY，不要执行项目任务。`) : ""}
             <div class="api-grid">${dshCards || '<div class="empty-mini">这个项目没有找到 DSH 对话。</div>'}</div>
             ${state.dshWorkers.length ? `<div class="selected-workers">${selectedDsh}</div>` : ""}
           </div>
@@ -404,13 +574,66 @@
   }
 
   function bindSetup() {
+    const openPlanner = $("#openPlannerCreate");
+    if (openPlanner) openPlanner.addEventListener("click", () => {
+      state.plannerCreateOpen = !state.plannerCreateOpen;
+      state.codexCreateOpen = false;
+      state.dshCreateOpen = false;
+      renderSetup();
+    });
+    const openCodex = $("#openCodexCreate");
+    if (openCodex) openCodex.addEventListener("click", () => {
+      state.codexCreateOpen = !state.codexCreateOpen;
+      state.plannerCreateOpen = false;
+      state.dshCreateOpen = false;
+      state.tab = "codex";
+      renderSetup();
+    });
+    const openDsh = $("#openDshCreate");
+    if (openDsh) openDsh.addEventListener("click", () => {
+      state.dshCreateOpen = !state.dshCreateOpen;
+      state.plannerCreateOpen = false;
+      state.codexCreateOpen = false;
+      state.tab = "dsh";
+      renderSetup();
+    });
+    $$("[data-cancel-create]").forEach((el) => el.addEventListener("click", () => {
+      const k = el.dataset.cancelCreate;
+      if (k === "codex") {
+        state.plannerCreateOpen = false;
+        state.codexCreateOpen = false;
+      } else if (state.plannerCreateOpen) {
+        state.plannerCreateOpen = false;
+      } else {
+        state.dshCreateOpen = false;
+      }
+      renderSetup();
+    }));
+    $$("[data-create-kind]").forEach((el) => el.addEventListener("click", () => {
+      createConversation(el.dataset.createKind, el.dataset.createRole);
+    }));
     $$("[data-planner]").forEach((el) => el.addEventListener("click", () => {
       if (el.classList.contains("disabled")) {
         toast("这个对话仍在执行中，先等它结束");
         return;
       }
       state.plannerId = el.dataset.planner;
+      state.plannerKind = "codex";
+      state.plannerDshId = null;
+      state.plannerTab = "codex";
       state.selectedCodex.delete(state.plannerId);
+      renderSetup();
+    }));
+    $$("[data-planner-dsh]").forEach((el) => el.addEventListener("click", () => {
+      state.plannerDshId = el.dataset.plannerDsh;
+      state.plannerKind = "dsh";
+      state.plannerTab = "dsh";
+      state.plannerId = null;
+      renderSetup();
+      updateInspector();
+    }));
+    $$("[data-planner-tab]").forEach((el) => el.addEventListener("click", () => {
+      state.plannerTab = el.dataset.plannerTab;
       renderSetup();
     }));
     $$("[data-worker]").forEach((el) => el.addEventListener("click", () => {
@@ -480,7 +703,7 @@
   }
 
   async function startRun() {
-    const planner = plannerThread();
+    const planner = plannerSelection();
     if (!planner) return toast("先选择一个 Planner 对话");
     const existing = workerThreads().filter((t) => state.selectedCodex.has(t.id));
     if (!existing.length && !state.dshWorkers.length && !state.apiWorkers.length) return toast("至少配置一个 Worker");
@@ -514,7 +737,9 @@
         body: JSON.stringify({
           project_id: state.project.id || "",
           project_path: state.project.path,
-          planner_thread_id: planner.id,
+          planner_kind: planner.kind,
+          planner_thread_id: planner.kind === "codex" ? planner.thread.id : "",
+          planner_session_id: planner.kind === "dsh" ? planner.session.session_id : "",
           goal,
           workers,
           max_rounds: state.maxRounds || 5,
@@ -716,7 +941,7 @@
         <div class="hint-card"><div class="hint-title">当前运行</div><p>${esc(run.goal || "")}</p></div>
         <div class="info-row"><span class="k">Planner 模型</span><span class="v">${esc(run.planner_model || "-")}</span></div>
         <div class="info-row"><span class="k">Planner 账号</span><span class="v">在 Codex 客户端手动切换</span></div>
-        <div class="info-row"><span class="k">Planner thread</span><span class="v">${esc(run.planner_thread_id || "-")}</span></div>
+        <div class="info-row"><span class="k">Planner 对话</span><span class="v">${esc(run.planner_title || run.planner_thread_id || run.planner_session_id || "-")}</span></div>
         <div class="info-row"><span class="k">轮次</span><span class="v">${esc(run.round || 0)} / ${esc(run.max_rounds || 0)}</span></div>
         <div class="info-row"><span class="k">任务完成</span><span class="v">${done} / ${tasks.length}</span></div>
         <div class="info-row"><span class="k">状态</span><span class="v">${esc(statusLabel(run.status))}</span></div>
@@ -724,18 +949,18 @@
       return;
     }
     const p = state.project;
-    const planner = plannerThread();
+    const planner = plannerSelection();
     const existing = workerThreads().filter((t) => state.selectedCodex.has(t.id));
     title.textContent = p ? "准备一次运行" : "还没有运行";
     body.innerHTML = p ? `
       <div class="hint-card"><div class="hint-title">当前项目</div><p>${esc(p.path)}</p></div>
-      <div class="info-row"><span class="k">Planner</span><span class="v">${esc(planner ? planner.model || "thread 默认" : "未选择")}</span></div>
-      <div class="info-row"><span class="k">Planner 账号</span><span class="v">在 Codex 客户端切换</span></div>
+      <div class="info-row"><span class="k">Planner</span><span class="v">${esc(planner ? planner.model || "默认模型" : "未选择")}</span></div>
+      <div class="info-row"><span class="k">Planner 类型</span><span class="v">${esc(planner ? (planner.kind === "dsh" ? "DSH 对话" : "Codex 对话") : "-")}</span></div>
       <div class="info-row"><span class="k">Codex Worker</span><span class="v">${existing.length}</span></div>
       <div class="info-row"><span class="k">DSH Worker</span><span class="v">${state.dshWorkers.length}</span></div>
       <div class="info-row"><span class="k">API Worker</span><span class="v">${state.apiWorkers.length}</span></div>
-      <div class="info-row"><span class="k">Planner thread</span><span class="v">${esc(planner ? planner.id.slice(0, 8) : "-")}</span></div>
-      <div class="hint-card"><div class="hint-title">上下文</div><p>Planner 的上下文只存在于 Codex thread 中。应用不会复制或伪造第二份 Planner 上下文。</p></div>
+      <div class="info-row"><span class="k">Planner 对话</span><span class="v">${esc(planner ? short(planner.title, 20) : "-")}</span></div>
+      <div class="hint-card"><div class="hint-title">上下文</div><p>Planner 的上下文只存在于它自己的对话中；Codex 与 DSH Planner 都会继续同一个对话。</p></div>
     ` : `<div class="hint-card"><div class="hint-title">开始之前</div><p>从左侧选择一个项目。Planner 使用现有 Codex 对话及其模型；Worker 使用现有对话或 DSH API。</p></div>`;
   }
 

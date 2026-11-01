@@ -1,6 +1,6 @@
 # Codex Studio
 
-本地可视化编排工作台：**Codex Planner + 现有 Codex Worker + DSH/API Worker**。
+本地可视化编排工作台：**Codex/DSH Planner + Codex/DSH/API Worker**。
 
 它解决的是：
 
@@ -12,13 +12,13 @@
 → Planner 验收并进入下一轮
 ```
 
-Planner 不是复制出来的代理，而是你选中的**现有 Codex 对话**。  
+Planner 不是复制出来的代理，而是你选中的**现有 Codex 或 DSH 对话**。  
 所以：
 
-- 应用里的 Planner = Codex 里的那个对话；
+- 应用里的 Planner = Codex / DSH 里的那个对话；
 - 模型就是该对话当前的模型；
 - 上下文只有一份；
-- 在 Codex 里切换账号后，继续同一个 thread 即可；
+- 在 Codex 里切换账号后，继续同一个 Codex thread 即可；
 - 应用不会另造一份 Planner 上下文。
 
 ## 启动
@@ -57,13 +57,13 @@ D:\CodexStudio\data
 
 ### 2. 选择 Planner
 
-从对话列表中选择一个作为 Planner。
+Planner 区域有 **Codex 对话** / **DSH 对话** 两个标签；从当前项目的列表中选择一个作为 Planner，或新建一个。
 
 - Planner 的模型显示在卡片上；
 - 不要求固定模型，选择哪个对话就用哪个对话的模型；
 - 这个对话如果正在执行，不能选；
-- Planner 的上下文由 Codex 管理，不由应用复制；
-- Planner 目前通过 `codex queue --resume` 发送，最好让 Planner 对话在 Codex 里保持打开，确保 Desktop 本地 daemon 能接收。Worker 则使用 `codex exec resume`，不依赖打开窗口。
+- Codex Planner 使用 `codex exec resume`，DSH Planner 使用 ACP `session/resume`；
+- 两者都继续原对话，不依赖 Codex 窗口保持打开，也不会复制 Planner 上下文。
 
 ### 3. 配置 Worker
 
@@ -72,6 +72,25 @@ D:\CodexStudio\data
 在“现有对话”标签中勾选一个或多个对话。应用会把它们作为 `codex-01`、`codex-02` 等 Worker，并用 `codex exec resume <thread>` 在对应 thread 上执行一轮。
 
 这里没有用 `codex queue` 作为 Worker 主路径：`queue` 只有在对话已经打开、Desktop 本地 daemon 能 resume 时才会真正开跑，后台对话可能一直停在队列里。`exec resume` 会直接写回同一个 thread，完成后打开 Codex 仍能看到这一轮。
+
+#### 新建对话（Codex / DSH）
+
+Planner 和 Worker 都支持 Codex / DSH 两种对话：
+
+- 选择一个已存在的对话；
+- 或点“新建对话”，让应用创建并命名一个新对话。
+
+新建 Worker 默认按 `worker1`、`worker2`、`worker3` 递增命名；Planner 默认命名为 `planner`，都可以在创建前修改。
+
+新建对话必须选择：
+
+- 模型；
+- Effort（`low` / `medium` / `high` / `max`）；
+- 初始化 Prompt。
+
+Codex 新对话通过 `codex exec` 创建，创建后会写回 Codex thread，并把 `threads.name` 设为用户指定的名字。DSH 新对话通过 ACP `session/new` 创建，设置模型与 `reasoning_effort`，发送初始化 Prompt，并把会话标题改为 `workerX`。
+
+新建对话的初始化 Prompt 建议只写角色和边界，让对话先回复 `READY`；真正的任务仍由 Planner 在运行时分派。
 
 #### 选择 DSH 对话 Worker
 
@@ -151,11 +170,12 @@ Worker 结束时写：
 
 应用不管理 Codex 账号，也不自动登录或自动切换。
 
-- Planner 使用 Codex 客户端当前账号；
+- Codex Planner 使用 Codex 客户端当前账号；
+- DSH Planner 使用 DSH 里选中的 provider/model；
 - 额度不足时，应用把运行标记为 `paused`；
 - 在 Codex 里手动切换到有额度的账号；
 - 回到应用点“切换账号后继续”；
-- 应用继续向**同一个 Planner thread** 发消息。
+- 应用继续向**同一个 Planner 对话**发消息。
 
 这依赖 Codex 自身“切换账号后继续同一对话”的行为，应用不复制上下文。
 

@@ -469,6 +469,175 @@ def project_roots(home: Path, project_ref: str) -> List[str]:
     return [ref] if Path(ref).is_dir() else []
 
 
+def set_codex_thread_name(home: Path, thread_id: str, name: str) -> None:
+    try:
+        con = sqlite3.connect(str(home / "state_5.sqlite"), timeout=15)
+        con.execute("UPDATE threads SET name=? WHERE id=?", (name, thread_id))
+        con.commit()
+        con.close()
+    except Exception:
+        pass
+
+
+def create_codex_conversation(
+    cfg: Dict[str, Any],
+    cwd: Path,
+    name: str,
+    model: str,
+    effort: str,
+    init_prompt: str,
+) -> Dict[str, Any]:
+    output = Path(cfg["data_dir"]) / "conversations" / "{}-{}.txt".format(
+        re.sub(r"[^A-Za-z0-9_.-]+", "_", name), uuid.uuid4().hex[:8]
+    )
+    output.parent.mkdir(parents=True, exist_ok=True)
+    env = os.environ.copy()
+    env["CODEX_HOME"] = cfg["codex_home"]
+    env["NO_COLOR"] = "1"
+    env["PYTHONIOENCODING"] = "utf-8"
+    cmd = [cfg["codex_exe"], "exec", "--json", "-o", str(output)]
+    if model:
+        cmd += ["-m", model]
+    if effort:
+        cmd += ["-c", 'model_reasoning_effort="{}"'.format(effort)]
+    cmd += ["-"]
+    p = subprocess.run(
+        cmd,
+        cwd=str(cwd),
+        env=env,
+        input=init_prompt.encode("utf-8"),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=240,
+    )
+    out = (p.stdout or b"").decode("utf-8", errors="replace")
+    err = (p.stderr or b"").decode("utf-8", errors="replace")
+    thread_id = ""
+    for line in out.splitlines():
+        try:
+            ev = json.loads(line)
+        except Exception:
+            continue
+        if ev.get("type") == "thread.started":
+            thread_id = str(ev.get("thread_id") or "")
+            break
+    if p.returncode != 0 or not thread_id:
+        raise StudioError("创建 Codex 对话失败：{}".format(tail(err or out, 1500)))
+    set_codex_thread_name(Path(cfg["codex_home"]), thread_id, name)
+    text = output.read_text(encoding="utf-8") if output.is_file() else ""
+    return {
+        "kind": "codex",
+        "id": thread_id,
+        "thread_id": thread_id,
+        "name": name,
+        "model": model,
+        "effort": effort,
+        "cwd": str(cwd),
+        "text": text,
+    }
+
+
+def set_dsh_session_title(cfg: Dict[str, Any], session_id: str, title: str) -> None:
+    try:
+        p = Path(cfg.get("dsh_chat_home") or cfg["dsh_home"]) / "storages" / "session_projcache" / "sessions" / (session_id + ".json")
+        if not p.is_file():
+            return
+        data = read_json(p)
+        record = data.get("record") or {}
+        rows = record.get("rows") or {}
+        row = rows.get("title") or {}
+        if isinstance(row, dict):
+            row["val"] = title
+            rows["title"] = row
+            record["rows"] = rows
+            data["record"] = record
+            write_json(p, data)
+    except Exception:
+        pass
+
+
+def create_dsh_conversation(
+    cfg: Dict[str, Any],
+    cwd: Path,
+    name: str,
+    model: Dict[str, Any],
+    effort: str,
+    init_prompt: str,
+) -> Dict[str, Any]:
+    client = AcpClient(cfg, cwd, None)
+    result: Optional[Dict[str, Any]] = None
+    try:
+        client.request("initialize", {"protocolVersion": 1}, timeout=30)
+        created, _ = client.request(
+            "session/new", {"cwd": str(cwd), "mcpServers": []}, timeout=60
+        )
+        session_id = str((created or {}).get("sessionId") or "")
+        if not session_id:
+            raise StudioError("DSH 没有返回新会话 ID")
+        client.session_id = session_id
+        provider = str(model.get("provider") or "")
+        model_id = str(model.get("model") or "")
+        if provider and model_id:
+            client.request(
+                "session/set_config_option",
+                {
+                    "sessionId": session_id,
+                    "configId": "model",
+                    "value": json.dumps([provider, model_id], separators=(",", ":")),
+                },
+                timeout=30,
+            )
+        if effort:
+            try:
+                client.request(
+                    "session/set_config_option",
+                    {
+                        "sessionId": session_id,
+                        "configId": "reasoning_effort",
+                        "value": effort,
+                    },
+                    timeout=30,
+                )
+            except StudioError as exc:
+                if "unknown" not in str(exc).lower():
+                    raise
+        client.request(
+            "session/prompt",
+            {
+                "sessionId": session_id,
+                "prompt": [{"type": "text", "text": init_prompt}],
+            },
+            timeout=180,
+        )
+        result = {
+            "kind": "dsh",
+            "id": session_id,
+            "session_id": session_id,
+            "name": name,
+            "provider": provider,
+            "model": model_id,
+            "effort": effort,
+            "cwd": str(cwd),
+        }
+    finally:
+        client.close()
+    if result:
+        # DSH flushes the session projection cache during close; rename after
+        # the write handle is released so the new title is what the picker sees.
+        deadline = time.time() + 5
+        while time.time() < deadline:
+            set_dsh_session_title(cfg, result["session_id"], name)
+            cache = Path(cfg.get("dsh_chat_home") or cfg["dsh_home"]) / "storages" / "session_projcache" / "sessions" / (result["session_id"] + ".json")
+            try:
+                title = (read_json(cache).get("record", {}).get("rows", {}).get("title") or {}).get("val")
+            except Exception:
+                title = None
+            if title == name:
+                break
+            time.sleep(0.25)
+    return result
+
+
 def codex_projects(home: Path) -> List[Dict[str, Any]]:
     """Return the project list exactly as Codex Desktop stores it.
 
@@ -1283,9 +1452,10 @@ def planner_prompt(run: Dict[str, Any], results: Optional[List[Dict[str, Any]]])
     return "\n".join(lines)
 
 
-def result_filename(task_id: str) -> str:
+def result_filename(task_id: str, directory: Optional[str] = None) -> str:
     safe = re.sub(r"[^A-Za-z0-9_.-]+", "_", task_id or "task")
-    return ".codex-studio-result-{}.json".format(safe)
+    name = ".codex-studio-result-{}.json".format(safe)
+    return str(Path(directory) / name) if directory else name
 
 
 def worker_prompt(run: Dict[str, Any], task: Dict[str, Any]) -> str:
@@ -1309,7 +1479,7 @@ project_dir={project}
 2. 只修改本任务范围内的文件；不要动其他人的工作。
 3. 完成后运行相称的测试，并把关键证据路径写下来。
 4. 不要向用户提问；无法完成就返回 blocked，说明缺什么。
-5. 结束时在项目根目录写 `{result_file}`，内容必须符合：
+5. 结束时把结果写到 `{result_file}`（这是 Studio 的独立结果目录，不是项目文件），内容必须符合：
 {schema}
 6. 最后再输出一个包含同结构 JSON 的 ```json 代码块。
 [/CODEX_STUDIO_TASK]""".format(
@@ -1320,7 +1490,7 @@ project_dir={project}
         goal=run["goal"],
         prompt=task["prompt"],
         acceptance=task.get("acceptance") or "按任务描述完成，并有可复核证据",
-        result_file=result_filename(task["task_id"]),
+        result_file=result_filename(task["task_id"], run.get("result_dir")),
         schema=WORKER_RESULT_SCHEMA,
     )
 
@@ -1471,38 +1641,67 @@ class Orchestrator:
     def _call_planner(
         self, state: Dict[str, Any], prompt: str, ev: threading.Event
     ) -> Tuple[str, Dict[str, Any]]:
-        tid = state["planner_thread_id"]
-        prev = self._wait_idle(tid, ev)
+        tid = state.get("planner_thread_id") or ""
+        if ev.is_set():
+            raise StudioError("stopped")
         self._event(state, "planner_dispatch", "向 Planner 发送第 {} 轮请求".format(state["round"]))
-        try:
-            queue_codex(Path(self.cfg["codex_exe"]), self.home, tid, prompt)
-        except StudioError as exc:
-            blob = str(exc).lower()
-            if "credit" in blob or "usage" in blob:
-                raise PausedError(
-                    "Planner 账号额度不足；请在 Codex 里切换到有额度的账号后继续。"
-                )
-            raise
-        turn = wait_for_new_turn(
+        if state.get("planner_kind") == "dsh":
+            res = run_dsh_acp_worker(
+                self.cfg,
+                str(state.get("planner_session_id") or ""),
+                Path(state.get("planner_cwd") or state["project_path"]),
+                prompt,
+                str(state.get("planner_provider") or ""),
+                str(state.get("planner_model") or ""),
+                int(self.cfg.get("planner_timeout_minutes", 90)) * 60,
+                None,
+                ev,
+            )
+            if res.get("status") == "failed":
+                blob = (res.get("error") or "") + "\n" + (res.get("text") or "")
+                if "credit" in blob.lower() or "usage limit" in blob.lower() or "额度" in blob:
+                    raise PausedError(
+                        "Planner 账号额度不足；请在 Codex 里切换到有额度的账号后继续。"
+                    )
+                raise StudioError("DSH Planner 回合失败：{}".format(tail(blob, 1500)))
+            text = res.get("text") or ""
+            if not text:
+                raise StudioError("DSH Planner 回合没有返回文本")
+            return text, {
+                "turn_id": "dsh-{}-{}".format(state["round"], int(time.time())),
+                "status": "completed",
+                "text": text,
+            }
+        output = (
+            Path(self.cfg["data_dir"])
+            / "runs"
+            / state["id"]
+            / "planner-round-{}.txt".format(state["round"])
+        )
+        res = run_codex_exec(
+            Path(self.cfg["codex_exe"]),
             self.home,
             tid,
-            prev,
-            timeout_seconds=int(self.cfg.get("planner_timeout_minutes", 90)) * 60,
-            poll_seconds=2.5,
-            stop_event=ev,
+            prompt,
+            Path(state.get("planner_cwd") or state["project_path"]),
+            int(self.cfg.get("planner_timeout_minutes", 90)) * 60,
+            output,
         )
-        text = turn.get("text") or ""
-        if turn.get("status") == "failed":
-            if is_usage_limit(turn):
+        blob = (res.get("stderr_tail") or "") + "\n" + (res.get("stdout_tail") or "")
+        if res.get("status") == "failed":
+            if "credit" in blob.lower() or "usage limit" in blob.lower() or "out of credits" in blob.lower():
                 raise PausedError(
                     "Planner 账号额度不足；请在 Codex 里切换到有额度的账号后继续。"
                 )
-            raise StudioError(
-                "Planner 回合失败：{}".format(
-                    json.dumps(turn.get("error") or {}, ensure_ascii=False)[:1500]
-                )
-            )
-        return text, turn
+            raise StudioError("Planner 回合失败：{}".format(tail(blob, 1500)))
+        text = res.get("text") or ""
+        if not text:
+            raise StudioError("Planner 回合没有返回文本")
+        return text, {
+            "turn_id": "exec-{}-{}".format(state["round"], int(time.time())),
+            "status": "completed",
+            "text": text,
+        }
 
     def _run(self, run_id: str, ev: threading.Event, resume: bool = False) -> None:
         state = self.store.load(run_id)
@@ -1723,7 +1922,7 @@ class Orchestrator:
             str(worker.get("provider") or ""),
             str(worker.get("model") or ""),
             int(task.get("timeout_minutes") or 45) * 60,
-            result_filename(task["task_id"]),
+            result_filename(task["task_id"], state.get("result_dir")),
             ev,
         )
         res.update({"worker": task["worker"], "task_id": task["task_id"]})
@@ -1749,7 +1948,7 @@ class Orchestrator:
             Path(self.cfg["data_dir"]) / "runs" / state["id"],
             task["task_id"],
             ev,
-            result_file_name=result_filename(task["task_id"]),
+            result_file_name=result_filename(task["task_id"], state.get("result_dir")),
         )
         res.update(
             {
@@ -1806,6 +2005,8 @@ class App:
                 "codex_home": self.cfg["codex_home"],
                 "data_dir": self.cfg["data_dir"],
                 "dsh_profile": self.cfg["dsh_profile"],
+                "codex_models": self.cfg.get("codex_models") or [],
+                "reasoning_efforts": self.cfg.get("reasoning_efforts") or ["low", "medium", "high", "max"],
             },
             "runs": self.store.list(12),
         }
@@ -1816,6 +2017,42 @@ class App:
     def dsh_conversations(self, project_ref: str) -> Dict[str, Any]:
         roots = project_roots(Path(self.cfg["codex_home"]), project_ref)
         return {"sessions": dsh_sessions(self.cfg, roots)}
+
+    def create_conversation(self, body: Dict[str, Any]) -> Dict[str, Any]:
+        home = Path(self.cfg["codex_home"])
+        kind = str(body.get("kind") or "").strip()
+        role = str(body.get("role") or "worker").strip()
+        project_id = str(body.get("project_id") or "").strip()
+        project_path = str(body.get("project_path") or "").strip()
+        roots = project_roots(home, project_id or project_path)
+        if not roots:
+            raise StudioError("项目不存在")
+        cwd = Path(project_path)
+        if not project_path or not any(norm_path(project_path) == norm_path(r) for r in roots):
+            cwd = Path(roots[0])
+        name = str(body.get("name") or "").strip()
+        if not name:
+            raise StudioError("对话名称不能为空")
+        init_prompt = str(body.get("init_prompt") or "").strip()
+        if not init_prompt:
+            init_prompt = "你是 {}。这是一个初始化回合，只确认你的角色并回复 READY，不要执行项目任务。".format(name)
+        if kind == "codex":
+            model = str(body.get("model") or "").strip()
+            if not model:
+                models = self.cfg.get("codex_models") or []
+                model = models[0] if models else "gpt-6.1-sol"
+            return create_codex_conversation(
+                self.cfg, cwd, name, model, str(body.get("effort") or "high"), init_prompt
+            )
+        if kind == "dsh":
+            mid = str(body.get("model_id") or "").strip()
+            model = self.cfg["_api_by_id"].get(mid)
+            if not model:
+                raise StudioError("请选择 DSH 模型")
+            return create_dsh_conversation(
+                self.cfg, cwd, name, model, str(body.get("effort") or "high"), init_prompt
+            )
+        raise StudioError("未知对话类型：{}".format(kind))
 
     def create_run(self, body: Dict[str, Any]) -> Dict[str, Any]:
         home = Path(self.cfg["codex_home"])
@@ -1829,15 +2066,30 @@ class App:
             project = roots[0]
         if not Path(project).is_dir():
             raise StudioError("项目目录不存在")
+        planner_kind = str(body.get("planner_kind") or "codex").strip()
         planner_id = str(body.get("planner_thread_id") or "").strip()
+        planner_session_id = str(body.get("planner_session_id") or "").strip()
         goal = str(body.get("goal") or "").strip()
-        if not planner_id or not goal:
-            raise StudioError("planner_thread_id、goal 都必填")
-        planner = thread_row(home, planner_id)
-        if planner.get("archived"):
-            raise StudioError("Planner 对话已归档")
-        if not any(path_under(path_from_db(planner.get("cwd")), root) for root in roots):
-            raise StudioError("Planner 对话不属于当前项目")
+        if not goal:
+            raise StudioError("goal 必填")
+        if planner_kind == "dsh":
+            if not planner_session_id:
+                raise StudioError("DSH Planner 缺少 planner_session_id")
+            sessions = dsh_sessions(self.cfg, roots, limit=500)
+            planner = next((s for s in sessions if s["session_id"] == planner_session_id), None)
+            if not planner:
+                raise StudioError("DSH Planner 不属于当前项目或已不存在")
+            planner_id = ""
+            planner["thread_id"] = ""
+        else:
+            planner_kind = "codex"
+            if not planner_id:
+                raise StudioError("planner_thread_id、goal 都必填")
+            planner = thread_row(home, planner_id)
+            if planner.get("archived"):
+                raise StudioError("Planner 对话已归档")
+            if not any(path_under(path_from_db(planner.get("cwd")), root) for root in roots):
+                raise StudioError("Planner 对话不属于当前项目")
         workers_raw = body.get("workers") or []
         if not isinstance(workers_raw, list) or not workers_raw:
             raise StudioError("至少配置一个 Worker")
@@ -1940,7 +2192,11 @@ class App:
             "project_id": project_id,
             "project_path": project,
             "project_roots": roots,
+            "planner_kind": planner_kind,
             "planner_thread_id": planner_id,
+            "planner_session_id": planner_session_id if planner_kind == "dsh" else "",
+            "planner_cwd": path_from_db(planner.get("cwd")) or project,
+            "planner_provider": planner.get("provider") or "",
             "planner_model": planner.get("model") or "",
             "planner_title": planner.get("name") or planner.get("title") or "",
             "workers": workers,
@@ -1950,7 +2206,9 @@ class App:
             "last_results": None,
             "last_plan": None,
             "error": "",
+            "result_dir": str(Path(self.cfg["data_dir"]) / "results" / run_id),
         }
+        Path(state["result_dir"]).mkdir(parents=True, exist_ok=True)
         self.store.save(state)
         self.orch.start(run_id)
         return state
@@ -2057,6 +2315,10 @@ class Handler(BaseHTTPRequestHandler):
             body = self._body()
             if path == "/api/runs":
                 st = APP.create_run(body)
+                self._json(st)
+                return
+            if path == "/api/conversations":
+                st = APP.create_conversation(body)
                 self._json(st)
                 return
             if path.startswith("/api/runs/") and path.endswith("/stop"):
