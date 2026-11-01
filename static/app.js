@@ -134,6 +134,24 @@
     localStorage.setItem("codex-studio-theme", theme);
   }
 
+  function openSettings() {
+    const cfg = (state.bootstrap && state.bootstrap.config) || {};
+    const models = (cfg.codex_models || []).join(" · ") || "-";
+    const body = $("#settingsBody");
+    body.innerHTML = `
+      <div class="setting-row"><span class="setting-key">Codex home</span><span class="setting-value">${esc(cfg.codex_home || "-")}</span></div>
+      <div class="setting-row"><span class="setting-key">数据目录</span><span class="setting-value">${esc(cfg.data_dir || "-")}</span></div>
+      <div class="setting-row"><span class="setting-key">Codex 模型</span><span class="setting-value">${esc(models)}</span></div>
+      <div class="setting-row"><span class="setting-key">Effort</span><span class="setting-value">${esc((cfg.reasoning_efforts || []).join(" · ") || "-")}</span></div>
+      <div class="setting-row"><span class="setting-key">DSH profile</span><span class="setting-value">${esc(cfg.dsh_profile || "-")}</span></div>
+      <p class="setting-note">路径和模型来自本地 config.json。修改 config.json 后重启应用即可生效。桌面版会把 Python 后端和静态页面一起打包，运行时不会打开浏览器。</p>`;
+    $("#settingsModal").hidden = false;
+  }
+
+  function closeSettings() {
+    $("#settingsModal").hidden = true;
+  }
+
   async function boot() {
     applyTheme(localStorage.getItem("codex-studio-theme") || "light");
     const params = new URLSearchParams(window.location.search);
@@ -143,6 +161,9 @@
       applyTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark");
     });
     $("#refreshBtn").addEventListener("click", () => loadBootstrap(false));
+    $("#settingsBtn").addEventListener("click", openSettings);
+    $("#closeSettings").addEventListener("click", closeSettings);
+    $("#settingsModal").addEventListener("click", (e) => { if (e.target.id === "settingsModal") closeSettings(); });
     $("#backToSetup").addEventListener("click", showSetup);
     $("#projectSearch").addEventListener("input", (e) => {
       state.projectFilter = e.target.value.toLowerCase();
@@ -500,9 +521,9 @@
     $("#main").innerHTML = `
       <div class="setup-head">
         <div>
-          <div class="setup-eyebrow">New orchestration</div>
-          <h1 class="setup-title">从项目到任务，交给 Planner</h1>
-          <p class="setup-sub">先选择项目，再选择或新建 Planner。Planner 与 Worker 都可以来自 Codex 或 DSH；新建时指定名称、模型、effort 和初始化 Prompt。</p>
+          <div class="setup-eyebrow">Workspace</div>
+          <h1 class="setup-title">准备一次运行</h1>
+          <p class="setup-sub">选择或新建 Planner 与 Worker，然后描述目标。Codex 与 DSH 都可以作为 Planner 或 Worker；新建对话时指定模型、effort 和初始化 Prompt。</p>
         </div>
         <div class="project-chip"><span>▣</span><span>${esc(p.path)}</span></div>
       </div>
@@ -560,7 +581,7 @@
           <div class="section-title-wrap"><div class="step-num">3</div><div><div class="section-title">告诉 Planner 要做什么</div><div class="section-sub">自然语言描述目标即可；Planner 会决定下一轮任务。</div></div></div>
         </div>
         <div class="section-body">
-          ${planner && planner.status === "failed" ? `<div class="notice">这个 Planner 的上一次回合失败了。若原因是额度不足，请先在 Codex 里切换账号或换一个对话。</div>` : ""}
+          ${planner && planner.kind === "codex" && planner.thread.status === "failed" ? `<div class="notice">这个 Planner 的上一次回合失败了。若原因是额度不足，请先在 Codex 里切换账号或换一个对话。</div>` : ""}
           <div class="goal-wrap"><textarea id="goalInput" class="goal-input" placeholder="例如：先只读检查项目当前进度，验收 B/C/D 的交付；如果还有下一轮工作，给合适的 Worker 分配任务，并说明验收标准。">${esc(state.goal)}</textarea></div>
           <div class="goal-foot">
             <div class="advanced">最多 <input id="maxRounds" class="mini-input" type="number" min="1" max="20" value="${esc(state.maxRounds)}"> 轮 · 一个 Worker 每轮一个 task</div>
@@ -856,16 +877,23 @@
       <span class="event-time">${esc((e.ts || "").slice(11, 16))}</span><span class="event-dot"></span><span>${esc(e.message || e.kind)}</span>
     </div>`).join("") || `<div class="empty-mini">还没有事件。</div>`;
     const canStop = !["done", "blocked", "failed", "stopped", "paused"].includes(run.status);
+    const canContinue = ["done", "blocked", "failed", "stopped"].includes(run.status);
+    const continueHtml = canContinue ? `<div class="continue-panel">
+      <div class="continue-head"><div><div class="panel-title">继续这个记录</div><div class="panel-sub">沿用同一个 Planner 和 Worker 池，追加若干轮。</div></div><span class="badge">R${esc(run.round || 0)}</span></div>
+      <textarea id="continueGoal" class="goal-input" placeholder="追加要求，例如：上一轮已完成初版，这一轮请验证边缘情况并补齐测试。"></textarea>
+      <div class="continue-foot"><span>追加 <input id="continueRounds" class="mini-input" type="number" min="1" max="20" value="2"> 轮</span><button id="continueRunBtn" class="primary-btn">追加运行</button></div>
+    </div>` : "";
     $("#main").innerHTML = `
       <div class="run-head">
         <div>
-          <div class="setup-eyebrow">Orchestration run</div>
+          <div class="setup-eyebrow">Run record</div>
           <div class="run-title">${esc(run.goal || "未命名运行")}</div>
           <div class="run-goal">${esc(run.project_path || "")}</div>
         </div>
         <div class="run-actions">
           <span class="status-pill ${statusClass(run.status)}">${esc(statusLabel(run.status))}</span>
           ${run.status === "paused" ? `<button class="secondary-btn" id="resumeRun">切换账号后继续</button>` : ""}
+          ${canContinue ? `<button class="secondary-btn" id="continueFocus">继续记录</button>` : ""}
           ${canStop ? `<button class="secondary-btn danger-btn" id="stopRun">停止</button>` : ""}
           <button class="secondary-btn" id="newRun">新建运行</button>
         </div>
@@ -877,6 +905,7 @@
         <div class="meta-card"><div class="meta-label">Run ID</div><div class="meta-value mono">${esc(run.id || "-")}</div></div>
       </div>
       ${run.error ? `<div class="notice">${esc(run.error)}</div>` : ""}
+      ${continueHtml}
       <div class="run-columns">
         <div>
           <div class="panel" style="margin-bottom:15px">
@@ -915,6 +944,30 @@
         showRun(next);
         startPolling(next.id);
       } catch (err) { toast(err.message); }
+    });
+    $("#continueFocus")?.addEventListener("click", () => {
+      const el = $("#continueGoal");
+      if (el) { el.scrollIntoView({ behavior: "smooth", block: "center" }); el.focus(); }
+    });
+    $("#continueRunBtn")?.addEventListener("click", async () => {
+      const instruction = ($("#continueGoal")?.value || "").trim();
+      const additional = Number($("#continueRounds")?.value || 2);
+      if (!instruction) return toast("写下追加要求");
+      const btn = $("#continueRunBtn");
+      if (btn) { btn.disabled = true; btn.textContent = "追加中..."; }
+      try {
+        const next = await api(`/api/runs/${encodeURIComponent(run.id)}/continue`, {
+          method: "POST",
+          body: JSON.stringify({ instruction, additional_rounds: additional }),
+        });
+        state.run = next;
+        toast(`已追加 ${additional} 轮，沿用同一个 Planner 与 Worker 池。`);
+        showRun(next);
+        startPolling(next.id);
+      } catch (err) {
+        toast(err.message);
+        if (btn) { btn.disabled = false; btn.textContent = "追加运行"; }
+      }
     });
     $("#newRun")?.addEventListener("click", () => { stopPolling(); showSetup(); });
     updateInspector();

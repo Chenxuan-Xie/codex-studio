@@ -1,0 +1,7 @@
+{
+  "name": "codex-studio",
+  "version": "0.1.0",
+  "description": "Codex Studio desktop shell",
+  "main": "main.js",
+  "private": true
+}

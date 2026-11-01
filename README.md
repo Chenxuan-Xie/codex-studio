@@ -5,6 +5,30 @@
 GitHub: <https://github.com/Chenxuan-Xie/codex-studio>  
 Release: <https://github.com/Chenxuan-Xie/codex-studio/releases/tag/v0.1.0>
 
+## Windows 桌面版
+
+Release 里提供两个可直接下载的 Windows 包：
+
+- `CodexStudio-Setup-0.1.0.exe`：安装到 `D:\CodexStudioApp`，双击即可运行；
+- `CodexStudio-0.1.0-win-x64.zip`：免安装便携版，解压后运行 `CodexStudio.exe` / `CodexStudio.cmd`。
+
+桌面版自带 Electron、Python 和前端资源，不需要另装 Node/Python；它不会打开浏览器，而是打开独立应用窗口。**Codex Studio 自己的数据全部在 D 盘**：
+
+- 程序：`D:\CodexStudioApp`
+- 运行记录、配置缓存、Chromium 缓存：`D:\CodexStudioAppData`
+- 运行数据库：`D:\CodexStudioAppData\data`
+- 源码版数据：`D:\CodexStudio\data`
+
+Codex / DSH 自己的数据仍由它们自己的目录管理。
+
+源码构建 Windows 包：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File D:\CodexStudio\desktop\build_portable.ps1
+```
+
+构建脚本使用本机 Electron 运行时和 DSH 自带 Python 运行时，生成 `dist\CodexStudio-win-x64`；`dist` 不会进入 Git 仓库。
+
 它解决的是：
 
 ```text
@@ -126,6 +150,17 @@ DSH 对话的标题、模型、cwd 来自 DSH 的 `session_projcache`。
 
 点击“开始运行”。
 
+### 5. 运行记录与继续
+
+每次运行都会写入 `runs` 数据库，左侧“运行记录”中可重新打开。
+
+打开一个已结束的记录后，底部有“继续这个记录”：
+
+- 沿用原来的 Planner 对话、模型和 Worker 池；
+- 追加 1–20 轮；
+- 追加要求会接到原目标后面，Planner 也能看到上一轮 Worker 结果；
+- 不会新建另一套 Planner 上下文，记录会保留完整历史。
+
 ## Planner 和 Worker 怎么协作
 
 Planner 收到：
@@ -161,10 +196,10 @@ Planner 返回：
 - `done`：目标完成；
 - `blocked`：需要人决策。
 
-Worker 结束时写：
+Worker 结束时写到 Studio 的独立结果目录（不是项目文件）：
 
 ```text
-.codex-studio-result-<task_id>.json
+D:\CodexStudioAppData\data\results\<run_id>\.codex-studio-result-<task_id>.json
 ```
 
 并输出同样结构的 JSON。应用读取结果，汇总后发回 Planner。

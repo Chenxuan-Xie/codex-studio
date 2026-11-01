@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Codex Studio</title>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    display: grid; place-items: center;
+    background: #f7f4ee; color: #2d2a26;
+    font: 14px/1.5 "Segoe UI", "Microsoft YaHei UI", sans-serif;
+  }
+  .wrap { text-align: center; transform: translateY(-8px); }
+  .mark {
+    width: 54px; height: 54px; margin: 0 auto 18px;
+    display: grid; place-items: center; border-radius: 16px;
+    color: #fffaf4; font-weight: 700; letter-spacing: .5px;
+    background: linear-gradient(145deg, #c87554, #91452f);
+    box-shadow: 0 8px 24px rgba(145, 69, 47, .22);
+  }
+  h1 { margin: 0; font: 500 24px/1.2 "Iowan Old Style", "Songti SC", Georgia, serif; }
+  p { margin: 8px 0 0; color: #756e65; font-size: 12px; }
+  .line { width: 180px; height: 2px; margin: 22px auto 0; background: #e6dfd4; overflow: hidden; border-radius: 2px; }
+  .line::after { content: ""; display: block; width: 45%; height: 100%; background: #b85c3e; animation: load 1.4s ease-in-out infinite; }
+  @keyframes load { 0% { transform: translateX(-120%); } 100% { transform: translateX(320%); } }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="mark">CS</div>
+    <h1>Codex Studio</h1>
+    <p>正在启动本地工作台...</p>
+    <div class="line"></div>
+  </div>
+</body>
+</html>

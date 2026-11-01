@@ -1594,6 +1594,37 @@ class Orchestrator:
         t = threading.Thread(target=self._run, args=(run_id, ev, False), daemon=True)
         t.start()
 
+    def continue_run(self, run_id: str, additional_rounds: int, instruction: str) -> Dict[str, Any]:
+        state = self.store.load(run_id)
+        if not state:
+            raise StudioError("run not found")
+        if state.get("status") in ("running", "stopping", "paused"):
+            raise StudioError("这个记录正在执行或等待继续，不能追加轮次")
+        instruction = (instruction or "").strip()
+        if not instruction:
+            raise StudioError("请写下追加要求")
+        additional = max(1, min(20, int(additional_rounds or 1)))
+        old_round = int(state.get("round") or 0)
+        state["goal"] = (state.get("goal") or "") + "\n\n[追加要求]\n" + instruction
+        state["round"] = old_round + 1
+        state["max_rounds"] = old_round + additional
+        state["status"] = "running"
+        state["phase"] = "planning"
+        state["error"] = ""
+        state["continued_at"] = now_iso()
+        self._event(
+            state,
+            "run_continued",
+            "追加 {} 轮：{}".format(additional, tail(instruction, 200)),
+            additional_rounds=additional,
+        )
+        self.store.save(state)
+        ev = threading.Event()
+        self.stop_events[run_id] = ev
+        t = threading.Thread(target=self._run, args=(run_id, ev, True), daemon=True)
+        t.start()
+        return state
+
     def resume(self, run_id: str) -> Dict[str, Any]:
         state = self.store.load(run_id)
         if not state:
@@ -2225,6 +2256,13 @@ class App:
     def resume_run(self, run_id: str) -> Dict[str, Any]:
         return self.orch.resume(run_id)
 
+    def continue_run(self, run_id: str, body: Dict[str, Any]) -> Dict[str, Any]:
+        return self.orch.continue_run(
+            run_id,
+            int(body.get("additional_rounds") or 1),
+            str(body.get("instruction") or ""),
+        )
+
 
 APP: Optional[App] = None
 
@@ -2331,6 +2369,11 @@ class Handler(BaseHTTPRequestHandler):
                 st = APP.resume_run(rid)
                 self._json(st)
                 return
+            if path.startswith("/api/runs/") and path.endswith("/continue"):
+                rid = path.split("/")[3]
+                st = APP.continue_run(rid, body)
+                self._json(st)
+                return
             self._json({"error": "not found"}, 404)
         except StudioError as exc:
             self._json({"error": str(exc)}, 400)
@@ -2343,10 +2386,13 @@ def main(argv: Optional[List[str]] = None) -> int:
     global CONFIG_PATH
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", default=str(CONFIG_PATH))
+    parser.add_argument("--port", type=int, default=None)
     args = parser.parse_args(argv)
     CONFIG_PATH = Path(args.config).expanduser().resolve()
     try:
         cfg = load_config()
+        if args.port:
+            cfg["port"] = int(args.port)
         global APP
         APP = App(cfg)
         host = cfg.get("host", "127.0.0.1")

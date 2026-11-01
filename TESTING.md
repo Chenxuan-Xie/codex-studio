@@ -19,6 +19,11 @@ Date: 2026-11-01
 - New-conversation UI — Planner/Codex/DSH forms rendered with model lists, effort lists, editable names, and initialization prompts.
 - New Codex conversation — created `worker1` with `gpt-6.1-sol` / `low`, replied `READY`, and wrote the Codex thread name.
 - `POST /api/conversations` — created `worker-http-test` through the HTTP route with model/effort and initial prompt, then deleted the test thread.
+- Run continuation — a completed state with round 1 was appended 2 rounds through `Orchestrator.continue_run`; state moved to round 2 / max 3 with the追加要求 in the goal.
+- Windows desktop shell — generic Electron launched with `CodexStudio.exe`, started its bundled Python backend on an available local port, and opened the app window.
+- Windows portable zip — 494 MB folder packed to `CodexStudio-0.1.0-win-x64.zip` (186 MB) and verified to launch.
+- Windows setup executable — IExpress package installed to `D:\CodexStudioApp` and launched `Codex Studio`.
+- D-drive data policy — Electron `userData`, session cache, logs, crash dumps, temp and Python backend data are under `D:\CodexStudioAppData`; portable config was generated with `data_dir=D:\CodexStudioAppData\data`.
 - New DSH conversation — created `worker9` with WorkBuddy / `low`, replied `READY`, and the DSH session title was renamed to `worker9`.
 - Full DSH Planner → Codex Worker run — a DSH Planner produced a plan, a Codex Worker executed the read-only task, and the DSH Planner returned `done`.
 - Full Codex Planner → DSH Worker run — after repairing the DSH Windows workspace permission, the DSH Worker executed a PowerShell read-only directory check and the run returned `done` (`run-20261101-193356-5662`).

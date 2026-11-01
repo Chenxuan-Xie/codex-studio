@@ -26,6 +26,7 @@
     <div class="topbar-actions">
       <span class="status-dot" id="serverDot"></span>
       <span class="server-label" id="serverLabel">本地</span>
+      <button class="icon-btn" id="settingsBtn" title="设置">⚙</button>
       <button class="icon-btn" id="themeBtn" title="切换主题">◐</button>
       <button class="icon-btn" id="refreshBtn" title="刷新">↻</button>
     </div>
@@ -76,6 +77,18 @@
         </div>
       </div>
     </aside>
+  </div>
+</div>
+<div id="settingsModal" class="modal-backdrop" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+    <div class="modal-head">
+      <div>
+        <div class="eyebrow">Settings</div>
+        <h2 id="settingsTitle">应用设置</h2>
+      </div>
+      <button class="icon-btn" id="closeSettings" title="关闭">×</button>
+    </div>
+    <div id="settingsBody" class="modal-body"></div>
   </div>
 </div>
 <div id="toast" class="toast"></div>
