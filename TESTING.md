@@ -20,13 +20,14 @@ Date: 2026-11-01
 - New Codex conversation — created `worker1` with `gpt-6.1-sol` / `low`, replied `READY`, and wrote the Codex thread name.
 - `POST /api/conversations` — created `worker-http-test` through the HTTP route with model/effort and initial prompt, then deleted the test thread.
 - New DSH conversation — created `worker9` with WorkBuddy / `low`, replied `READY`, and the DSH session title was renamed to `worker9`.
-- Full DSH Planner → Codex Worker run — a DSH Planner produced a plan, a Codex Worker executed the read-only task, and the DSH Planner returned `done` (`run-20261101-192018-d5fc`).
+- Full DSH Planner → Codex Worker run — a DSH Planner produced a plan, a Codex Worker executed the read-only task, and the DSH Planner returned `done`.
+- Full Codex Planner → DSH Worker run — after repairing the DSH Windows workspace permission, the DSH Worker executed a PowerShell read-only directory check and the run returned `done` (`run-20261101-193356-5662`).
+- DSH Windows ACL repair — added the signed-in user's full-control entry to the `AI+6G` workspace, verified `WRITE_OWNER`, then repeated the confined DSH shell operation successfully (`ACL_SHELL_OK`). Recovery files are in `data/acl-recovery`.
 - Launcher — `start_studio.ps1 -NoBrowser` detected the running server without error.
 
 ## Not yet run
 
-- A full paid Planner → real task → DSH/Codex Worker → Planner review cycle using a funded Codex account, because the existing Planner thread previously hit workspace credits. A full DSH Planner → Codex Worker cycle did pass.
-- DSH Worker shell execution in the `AI+6G` project was blocked by a DSH Windows sandbox ACL error (`SetNamedSecurityInfoW failed (Win32 5)`), not by Studio's ACP transport. DSH Worker plain LLM turns succeed; project-shell tasks need a DSH sandbox/profile that can grant ACLs.
+- A full write-capable paid task with production file changes was not run; both read-only end-to-end cycles passed.
 - A live DSH conversation must be closed before ACP can take its write handle; this is an expected DSH ownership constraint, not a Studio crash.
 
 ## Known constraints
