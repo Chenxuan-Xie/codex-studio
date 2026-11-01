@@ -39,6 +39,21 @@ from urllib.parse import parse_qs, urlparse
 
 ROOT = Path(__file__).resolve().parent
 CONFIG_PATH = ROOT / "config.json"
+
+
+def _hidden_subprocess_kwargs() -> Dict[str, Any]:
+    """Keep console helper processes invisible in the packaged Windows app.
+
+    The desktop backend runs under pythonw.exe, but codex.exe, node.exe and
+    git.exe are console executables. Without CREATE_NO_WINDOW Windows creates
+    a new black console for every conversation/task.
+    """
+    if os.name == "nt":
+        return {"creationflags": 0x08000000}
+    return {}
+
+
+HIDDEN_SUBPROCESS = _hidden_subprocess_kwargs()
 STATIC_DIR = ROOT / "static"
 
 PLAN_EXAMPLE = """```json
@@ -331,7 +346,8 @@ def queue_codex(
         env.update(env_extra)
     cmd = [str(codex_exe), "queue", "--thread", thread_id, "--message", message, "--resume"]
     p = subprocess.run(
-        cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env, timeout=120
+        cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env, timeout=120,
+        **HIDDEN_SUBPROCESS
     )
     out = (p.stdout or b"").decode("utf-8", errors="replace")
     err = (p.stderr or b"").decode("utf-8", errors="replace")
@@ -381,6 +397,7 @@ def run_codex_exec(
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
+        **HIDDEN_SUBPROCESS
     )
     try:
         out_b, err_b = p.communicate(input=prompt.encode("utf-8"), timeout=max(1, timeout_seconds))
@@ -423,6 +440,7 @@ def run_codex_exec(
     return {
         "status": status,
         "text": final,
+        "error": "" if status != "failed" else tail(err or out, 2000),
         "parsed": parsed,
         "exit_code": p.returncode,
         "timed_out": timed_out,
@@ -509,6 +527,7 @@ def create_codex_conversation(
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         timeout=240,
+        **HIDDEN_SUBPROCESS
     )
     out = (p.stdout or b"").decode("utf-8", errors="replace")
     err = (p.stderr or b"").decode("utf-8", errors="replace")
@@ -913,6 +932,7 @@ def run_dsh_worker(
         env=env,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
+        **HIDDEN_SUBPROCESS
     )
     stdout_chunks: List[bytes] = []
     stderr_chunks: List[bytes] = []
@@ -1062,6 +1082,7 @@ class AcpClient:
             text=True,
             encoding="utf-8",
             errors="replace",
+            **HIDDEN_SUBPROCESS
         )
         self.q: "queue.Queue[Tuple[str, Any]]" = queue.Queue()
         self.events: List[Dict[str, Any]] = []
@@ -1164,6 +1185,122 @@ class AcpClient:
                 pass
 
 
+def run_dsh_new_session_worker(
+    cfg: Dict[str, Any],
+    cwd: Path,
+    prompt: str,
+    provider: str,
+    model: str,
+    effort: str,
+    timeout_seconds: int,
+    result_file_name: Optional[str],
+    stop_event: Optional[threading.Event],
+    title: str,
+) -> Dict[str, Any]:
+    """Run a task in a fresh DSH session.
+
+    This is used when the selected conversation is currently owned by the DSH
+    GUI. A fresh session has its own write handle, so it can run without
+    closing or disturbing the user's open conversations.
+    """
+    client: Optional[AcpClient] = None
+    started = time.time()
+    session_id = ""
+    try:
+        client = AcpClient(cfg, cwd, stop_event)
+        client.request("initialize", {"protocolVersion": 1}, timeout=30)
+        created, _ = client.request("session/new", {"cwd": str(cwd), "mcpServers": []}, timeout=60)
+        session_id = str((created or {}).get("sessionId") or "")
+        if not session_id:
+            raise StudioError("DSH fallback 没有返回 session id")
+        client.session_id = session_id
+        if provider and model:
+            client.request(
+                "session/set_config_option",
+                {"sessionId": session_id, "configId": "model", "value": json.dumps([provider, model], separators=(",", ":"))},
+                timeout=30,
+            )
+        if effort:
+            try:
+                client.request(
+                    "session/set_config_option",
+                    {"sessionId": session_id, "configId": "reasoning_effort", "value": effort},
+                    timeout=30,
+                )
+            except StudioError as exc:
+                if "unknown" not in str(exc).lower() and "Method not found" not in str(exc):
+                    raise
+        result, notifications = client.request(
+            "session/prompt",
+            {"sessionId": session_id, "prompt": [{"type": "text", "text": prompt}]},
+            timeout=timeout_seconds,
+        )
+        parts = []
+        for ev in notifications:
+            if ev.get("method") != "session/update":
+                continue
+            update = (ev.get("params") or {}).get("update") or {}
+            if update.get("sessionUpdate") == "agent_message_chunk":
+                content = update.get("content") or {}
+                if content.get("type") == "text":
+                    parts.append(str(content.get("text") or ""))
+        text = "".join(parts)
+        result_path = cwd / (result_file_name or ".codex-studio-result.json")
+        parsed = None
+        if result_path.is_file():
+            try:
+                parsed = extract_json_payload(result_path.read_text(encoding="utf-8"))
+                if parsed and not text:
+                    text = result_path.read_text(encoding="utf-8")
+            except Exception:
+                pass
+        if not parsed:
+            parsed = extract_json_payload(text)
+        status = "done"
+        ps = str((parsed or {}).get("status", "")).lower()
+        if ps in ("done", "blocked", "failed"):
+            status = ps
+        elif not text:
+            status = "failed"
+        return {
+            "status": status,
+            "text": text,
+            "parsed": parsed,
+            "stop_reason": (result or {}).get("stopReason"),
+            "stderr_tail": tail("\n".join(client.stderr_tail), 4000),
+            "elapsed_seconds": round(time.time() - started, 1),
+            "session_id": session_id,
+            "fallback_used": True,
+            "fallback_title": title,
+        }
+    except Exception as exc:
+        return {
+            "status": "failed",
+            "text": "",
+            "parsed": None,
+            "error": "DSH fallback session 失败：{}".format(exc),
+            "stderr_tail": tail("\n".join(client.stderr_tail if client else []), 4000),
+            "elapsed_seconds": round(time.time() - started, 1),
+            "session_id": session_id,
+            "fallback_used": True,
+        }
+    finally:
+        if client is not None:
+            client.close()
+        if session_id:
+            deadline = time.time() + 5
+            while time.time() < deadline:
+                set_dsh_session_title(cfg, session_id, title)
+                try:
+                    p = Path(cfg.get("dsh_chat_home") or cfg["dsh_home"]) / "storages" / "session_projcache" / "sessions" / (session_id + ".json")
+                    current = (read_json(p).get("record", {}).get("rows", {}).get("title") or {}).get("val")
+                except Exception:
+                    current = None
+                if current == title:
+                    break
+                time.sleep(0.25)
+
+
 def run_dsh_acp_worker(
     cfg: Dict[str, Any],
     session_id: str,
@@ -1174,6 +1311,8 @@ def run_dsh_acp_worker(
     timeout_seconds: int,
     result_file_name: Optional[str],
     stop_event: Optional[threading.Event],
+    effort: str = "high",
+    fallback_title: str = "",
 ) -> Dict[str, Any]:
     """Continue one persisted DSH conversation and return its final message.
 
@@ -1258,7 +1397,24 @@ def run_dsh_acp_worker(
         }
     except Exception as exc:
         message = str(exc)
-        if "active write handle" in message or "already owned" in message:
+        busy = "active write handle" in message or "already owned" in message
+        if busy and fallback_title:
+            if client is not None:
+                client.close()
+                client = None
+            return run_dsh_new_session_worker(
+                cfg,
+                cwd,
+                prompt,
+                provider,
+                model,
+                effort,
+                timeout_seconds,
+                result_file_name,
+                stop_event,
+                fallback_title,
+            )
+        if busy:
             message = "DSH 会话正在被 DSH 客户端占用；请关闭该对话或换一个 DSH 对话后重试。原始错误：" + message
         return {
             "status": "failed",
@@ -1884,6 +2040,9 @@ class Orchestrator:
         task["parsed"] = result.get("parsed")
         task["error"] = result.get("error") or ""
         task["worktree"] = result.get("worktree") or ""
+        if result.get("fallback_used"):
+            task["fallback_used"] = True
+            task["fallback_session_id"] = result.get("session_id") or ""
         task["finished_at"] = now_iso()
         self._event(
             state,
@@ -1937,6 +2096,60 @@ class Orchestrator:
             int(task.get("timeout_minutes") or 45) * 60,
             output,
         )
+        error_blob = (res.get("stderr_tail") or "") + "\n" + (res.get("stdout_tail") or "")
+        if res.get("status") == "failed" and (
+            "active writer" in error_blob.lower()
+            or "thread-store conflict" in error_blob.lower()
+            or "already has an active" in error_blob.lower()
+        ):
+            # The Codex Desktop window owns the thread and refuses a second
+            # writer. In that case its local queue is the safe path: it keeps
+            # the same thread and waits for the Desktop daemon to run it.
+            self._event(
+                state,
+                "task_queue_fallback",
+                "{} 的 Codex thread 正在被桌面端占用，改用 Codex 本地队列".format(task["worker"]),
+                worker=task["worker"],
+                task_id=task["task_id"],
+            )
+            previous = self._wait_idle(tid, ev)
+            try:
+                queue_codex(Path(self.cfg["codex_exe"]), self.home, tid, prompt)
+                turn = wait_for_new_turn(
+                    self.home,
+                    tid,
+                    previous,
+                    timeout_seconds=int(task.get("timeout_minutes") or 45) * 60,
+                    poll_seconds=2.5,
+                    stop_event=ev,
+                )
+                text = turn.get("text") or ""
+                parsed = extract_json_payload(text)
+                status = "done"
+                ps = str((parsed or {}).get("status", "")).lower()
+                if ps in ("done", "blocked", "failed"):
+                    status = ps
+                elif turn.get("status") == "failed":
+                    status = "failed"
+                return {
+                    "status": status,
+                    "text": text,
+                    "parsed": parsed,
+                    "error": "" if status != "failed" else "Codex queue turn failed: {}".format(json.dumps(turn.get("error") or {}, ensure_ascii=False)),
+                    "queue_fallback": True,
+                    "turn": turn,
+                    "worker": task["worker"],
+                    "task_id": task["task_id"],
+                }
+            except Exception as exc:
+                self._event(
+                    state,
+                    "task_failed",
+                    "{} queue fallback 失败：{}".format(task["worker"], tail(str(exc), 500)),
+                    worker=task["worker"],
+                    task_id=task["task_id"],
+                )
+                res["error"] = "Codex thread 正在被桌面端占用，queue fallback 也失败：{}".format(exc)
         res.update({"worker": task["worker"], "task_id": task["task_id"]})
         return res
 
@@ -1955,6 +2168,8 @@ class Orchestrator:
             int(task.get("timeout_minutes") or 45) * 60,
             result_filename(task["task_id"], state.get("result_dir")),
             ev,
+            effort=str(worker.get("effort") or "high"),
+            fallback_title="{}•fallback".format(task["worker"]),
         )
         res.update({"worker": task["worker"], "task_id": task["task_id"]})
         return res
@@ -1998,6 +2213,7 @@ class Orchestrator:
             [git, "-C", str(project), "status", "--porcelain"],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
+            **HIDDEN_SUBPROCESS
         )
         if status.returncode != 0:
             raise StudioError("项目不是可用的 git 仓库")
@@ -2011,6 +2227,7 @@ class Orchestrator:
             [git, "-C", str(project), "worktree", "add", "--detach", str(wt), "HEAD"],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
+            **HIDDEN_SUBPROCESS
         )
         if p.returncode != 0:
             raise StudioError("创建 worktree 失败：{}".format((p.stderr or b"").decode("utf-8", "replace")))

@@ -21,6 +21,9 @@ Date: 2026-11-01
 - `POST /api/conversations` — created `worker-http-test` through the HTTP route with model/effort and initial prompt, then deleted the test thread.
 - Run continuation — a completed state with round 1 was appended 2 rounds through `Orchestrator.continue_run`; state moved to round 2 / max 3 with the追加要求 in the goal.
 - Run continuation UI — a saved completed record opened with the “继续这个记录” composer, rounds field and append button.
+- Codex active-writer observation — codex-02 failed with `thread-store conflict ... already has an active writer`; the new worker path detects this and falls back to the Codex desktop queue instead of losing the task.
+- DSH live-session fallback — resuming a live session (`worker1`) created a fresh session and returned `FALLBACK_OK` without closing or disturbing the open DSH conversation.
+- Console suppression — all Codex, DSH Node and git subprocess launches now pass Windows `CREATE_NO_WINDOW`; the packaged desktop shell starts Python via `pythonw.exe`.
 - Windows desktop shell — generic Electron launched with `CodexStudio.exe`, started its bundled Python backend on an available local port, and opened the app window.
 - Windows portable zip — 494 MB folder packed to `CodexStudio-0.1.0-win-x64.zip` (186 MB) and verified to launch.
 - Windows setup executable — IExpress package installed to `D:\CodexStudioApp` and launched `Codex Studio`.

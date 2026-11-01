@@ -12,7 +12,7 @@ Release 里提供两个可直接下载的 Windows 包：
 - `CodexStudio-Setup-0.1.0.exe`：安装到 `D:\CodexStudioApp`，双击即可运行；
 - `CodexStudio-0.1.0-win-x64.zip`：免安装便携版，解压后运行 `CodexStudio.exe` / `CodexStudio.cmd`。
 
-桌面版自带 Electron、Python 和前端资源，不需要另装 Node/Python；它不会打开浏览器，而是打开独立应用窗口。**Codex Studio 自己的数据全部在 D 盘**：
+桌面版自带 Electron、Python 和前端资源，不需要另装 Node/Python；它不会打开浏览器，而是打开独立应用窗口。安装包会创建桌面和开始菜单的 `Codex Studio` 图标。**Codex Studio 自己的数据全部在 D 盘**：
 
 - 程序：`D:\CodexStudioApp`
 - 运行记录、配置缓存、Chromium 缓存：`D:\CodexStudioAppData`
@@ -160,6 +160,13 @@ DSH 对话的标题、模型、cwd 来自 DSH 的 `session_projcache`。
 - 追加 1–20 轮；
 - 追加要求会接到原目标后面，Planner 也能看到上一轮 Worker 结果；
 - 不会新建另一套 Planner 上下文，记录会保留完整历史。
+
+## 占用与控制台修复
+
+- Codex Worker 的 thread 如果被 Codex Desktop 占用（`active writer`），新版会回退到 Codex 本地队列，仍写回同一个 thread。
+- DSH Worker 的对话如果正在 DSH 客户端打开，新版会在同一项目下自动创建一个 fallback DSH 会话执行该任务，不关闭、不打断你已经打开的 DSH 对话；任务结束会保留 fallback 会话供查看。
+- 所有 `codex.exe`、`node.exe`、`git.exe` 子进程都使用 Windows `CREATE_NO_WINDOW`，桌面版不会再为新建对话、Planner 分派或 Worker 执行弹出黑色控制台。
+- fallback 是新建独立会话，不会改变原 DSH 对话的上下文；任务提示本身是自包含的。
 
 ## Planner 和 Worker 怎么协作
 
