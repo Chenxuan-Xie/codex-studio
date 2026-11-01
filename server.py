@@ -1831,7 +1831,9 @@ class Orchestrator:
         t.start()
         return state
 
-    def resume_interrupted(self, run_id: str, message: str = "") -> Dict[str, Any]:
+    def resume_interrupted(
+        self, run_id: str, message: str = "", planner_note: str = ""
+    ) -> Dict[str, Any]:
         state = self.store.load(run_id)
         if not state:
             raise StudioError("run not found")
@@ -1868,6 +1870,10 @@ class Orchestrator:
             task["parsed"] = None
             task["error"] = ""
             task["resumed_at"] = now_iso()
+        if planner_note.strip():
+            state.setdefault("planner_notes", []).append(
+                {"ts": now_iso(), "text": planner_note.strip()}
+            )
         state["status"] = "running"
         state["phase"] = "executing"
         state["error"] = ""
@@ -2646,7 +2652,11 @@ class App:
         )
 
     def resume_interrupted(self, run_id: str, body: Dict[str, Any]) -> Dict[str, Any]:
-        return self.orch.resume_interrupted(run_id, str(body.get("message") or ""))
+        return self.orch.resume_interrupted(
+            run_id,
+            str(body.get("message") or ""),
+            str(body.get("planner_note") or ""),
+        )
 
     def add_planner_note(self, run_id: str, body: Dict[str, Any]) -> Dict[str, Any]:
         state = self.store.load(run_id)

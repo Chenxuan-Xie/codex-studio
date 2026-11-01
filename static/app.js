@@ -892,6 +892,7 @@
     const interruptedTasks = (run.tasks || []).filter((t) => Number(t.round) === latestRound && ["failed", "blocked", "stopped", "interrupted"].includes(t.status));
     const resumeHtml = interruptedTasks.length && !["running", "stopping", "paused"].includes(run.status) ? `<div class="continue-panel resume-panel">
       <div class="continue-head"><div><div class="panel-title">恢复中断的任务</div><div class="panel-sub">只重跑失败、阻塞或停止的任务，不碰已完成的对话；完成后交给 Planner 检查。</div></div><span class="badge">${interruptedTasks.length} 个中断</span></div>
+      <textarea id="resumePlannerNote" class="goal-input" placeholder="可选：给 Planner 的说明，例如：前面的规划是……；请把 X 交给 Y，不要重复启动已有任务。"></textarea>
       <div class="resume-note">已发出的任务会发送续跑指令：“前面因为额度问题中断，现在继续前面的任务。”；完全没有发出的任务会重发原始提示词，不会错误地续跑空对话。</div>
       <div class="continue-foot"><span>${interruptedTasks.map((t) => esc(t.worker)).join(" · ")}</span><button id="resumeInterruptedBtn" class="primary-btn">恢复中断任务</button></div>
     </div>` : "";
@@ -965,7 +966,7 @@
       try {
         const next = await api(`/api/runs/${encodeURIComponent(run.id)}/resume-interrupted`, {
           method: "POST",
-          body: JSON.stringify({}),
+          body: JSON.stringify({ planner_note: ($("#resumePlannerNote")?.value || "").trim() }),
         });
         state.run = next;
         toast("已开始恢复中断任务；已完成的对话不会重跑。");
