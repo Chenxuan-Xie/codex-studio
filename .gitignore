@@ -1,6 +1,7 @@
 # Local machine configuration and runtime state
 config.json
 data/
+dist/
 *.pyc
 __pycache__/
 .pytest_cache/
