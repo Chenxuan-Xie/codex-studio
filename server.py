@@ -1557,6 +1557,12 @@ def planner_prompt(run: Dict[str, Any], results: Optional[List[Dict[str, Any]]])
         "",
         "可用 Worker（只能使用这些名字）：",
     ]
+    notes = run.get("planner_notes") or []
+    if notes:
+        lines.append("")
+        lines.append("用户追加的协调要求（优先遵守，但仍受验收规则约束）：")
+        for note in notes[-10:]:
+            lines.append("- {}".format(note.get("text") if isinstance(note, dict) else note))
     for w in run["workers"]:
         if w["kind"] == "codex":
             lines.append(
@@ -1575,6 +1581,18 @@ def planner_prompt(run: Dict[str, Any], results: Optional[List[Dict[str, Any]]])
                 "- {} | 类型=API Worker | provider={} | model={} | 等级={} | 特点={}".format(
                     w["name"], w.get("provider"), w.get("model"), w.get("tier") or "standard",
                     ", ".join(w.get("strengths") or []),
+                )
+            )
+    prior_tasks = run.get("tasks") or []
+    if prior_tasks:
+        lines.append("")
+        lines.append("已有任务（不要重复启动；用户后续指令优先）：")
+        for task in prior_tasks[-16:]:
+            lines.append(
+                "- {} | {} | {}".format(
+                    task.get("worker") or task.get("task_id"),
+                    task.get("task_id") or "",
+                    task.get("status") or "",
                 )
             )
     lines += [
@@ -1614,7 +1632,26 @@ def result_filename(task_id: str, directory: Optional[str] = None) -> str:
     return str(Path(directory) / name) if directory else name
 
 
+def task_was_sent(task: Dict[str, Any]) -> bool:
+    """Whether the worker actually received a task prompt."""
+    if isinstance(task.get("sent"), bool):
+        return task["sent"]
+    status = str(task.get("status") or "")
+    if status in ("stopped", "blocked"):
+        return True
+    error = str(task.get("error") or "").lower()
+    if any(x in error for x in ("active write handle", "already owned", "active writer", "thread-store conflict")):
+        return False
+    if status == "failed" and not (task.get("text") or "").strip():
+        return False
+    return status in ("done", "failed", "interrupted")
+
+
 def worker_prompt(run: Dict[str, Any], task: Dict[str, Any]) -> str:
+    resume_note = task.get("resume_note") or ""
+    resume_block = ""
+    if resume_note:
+        resume_block = "\n【恢复执行指令】\n{}\n".format(resume_note)
     return """[CODEX_STUDIO_TASK]
 round={round}
 task_id={task_id}
@@ -1623,7 +1660,7 @@ project_dir={project}
 
 总目标：
 {goal}
-
+{resume_block}
 你的任务：
 {prompt}
 
@@ -1644,6 +1681,7 @@ project_dir={project}
         worker=task["worker"],
         project=run["project_path"],
         goal=run["goal"],
+        resume_block=resume_block,
         prompt=task["prompt"],
         acceptance=task.get("acceptance") or "按任务描述完成，并有可复核证据",
         result_file=result_filename(task["task_id"], run.get("result_dir")),
@@ -1762,6 +1800,18 @@ class Orchestrator:
         additional = max(1, min(20, int(additional_rounds or 1)))
         old_round = int(state.get("round") or 0)
         state["goal"] = (state.get("goal") or "") + "\n\n[追加要求]\n" + instruction
+        if not state.get("last_results") and state.get("tasks"):
+            state["last_results"] = [
+                {
+                    "worker": t.get("worker"),
+                    "task_id": t.get("task_id"),
+                    "status": t.get("status"),
+                    "text": t.get("text") or "",
+                    "parsed": t.get("parsed"),
+                    "error": t.get("error") or "",
+                }
+                for t in state.get("tasks") or []
+            ]
         state["round"] = old_round + 1
         state["max_rounds"] = old_round + additional
         state["status"] = "running"
@@ -1780,6 +1830,110 @@ class Orchestrator:
         t = threading.Thread(target=self._run, args=(run_id, ev, True), daemon=True)
         t.start()
         return state
+
+    def resume_interrupted(self, run_id: str, message: str = "") -> Dict[str, Any]:
+        state = self.store.load(run_id)
+        if not state:
+            raise StudioError("run not found")
+        if state.get("status") in ("running", "stopping", "paused"):
+            raise StudioError("当前运行还没有结束，不能恢复中断任务")
+        latest_round = max([int(t.get("round") or 0) for t in state.get("tasks") or []] or [0])
+        candidates = [
+            t
+            for t in state.get("tasks") or []
+            if int(t.get("round") or 0) == latest_round
+            and t.get("status") in ("failed", "blocked", "stopped", "interrupted")
+        ]
+        if not candidates:
+            raise StudioError("没有可恢复的中断任务")
+        note = (message or "").strip() or (
+            "前面因为额度问题中断，现在继续前面的任务。先检查你已经完成的部分，"
+            "不要重复已完成的写入；从中断点继续，保持原有验收标准，完成后按原协议报告。"
+        )
+        resend_count = 0
+        continue_count = 0
+        for task in candidates:
+            was_sent = task_was_sent(task)
+            if was_sent:
+                task["resume_note"] = note
+                task["resume_mode"] = "continue"
+                continue_count += 1
+            else:
+                task.pop("resume_note", None)
+                task["resume_mode"] = "resend"
+                resend_count += 1
+            task["attempts"] = int(task.get("attempts") or 1) + 1
+            task["previous_error"] = task.get("error") or ""
+            task["status"] = "queued"
+            task["sent"] = False
+            task["sent_at"] = ""
+            task["text"] = ""
+            task["parsed"] = None
+            task["error"] = ""
+            task["resumed_at"] = now_iso()
+        state["status"] = "running"
+        state["phase"] = "executing"
+        state["error"] = ""
+        self._event(
+            state,
+            "resume_interrupted",
+            "恢复 {} 个中断任务（未发出重发 {}，已发出续跑 {}）：{}".format(
+                len(candidates), resend_count, continue_count, tail(note, 180)
+            ),
+        )
+        self.store.save(state)
+        ev = threading.Event()
+        self.stop_events[run_id] = ev
+        t = threading.Thread(
+            target=self._resume_interrupted_worker,
+            args=(run_id, candidates, ev),
+            daemon=True,
+        )
+        t.start()
+        return state
+
+    def _resume_interrupted_worker(
+        self, run_id: str, tasks: List[Dict[str, Any]], ev: threading.Event
+    ) -> None:
+        state = self.store.load(run_id)
+        if not state:
+            return
+        try:
+            self._execute_tasks(state, tasks, ev)
+            latest_round = max([int(t.get("round") or 0) for t in state.get("tasks") or []] or [0])
+            latest = [
+                t for t in state.get("tasks") or []
+                if int(t.get("round") or 0) == latest_round
+            ]
+            state["last_results"] = [
+                {
+                    "worker": t.get("worker"),
+                    "task_id": t.get("task_id"),
+                    "status": t.get("status"),
+                    "text": t.get("text") or "",
+                    "parsed": t.get("parsed"),
+                    "error": t.get("error") or "",
+                }
+                for t in latest
+            ]
+            state["phase"] = "review"
+            self._event(state, "resume_finished", "中断任务已恢复，交给 Planner 验收")
+            # Re-enter the existing Planner loop so the normal review and
+            # dispatch rules still apply; only interrupted tasks were rerun.
+            self._run(run_id, ev, True)
+        except PausedError as exc:
+            state = self.store.load(run_id) or state
+            state["status"] = "paused"
+            state["phase"] = "paused"
+            state["error"] = str(exc)
+            self._event(state, "paused", str(exc))
+        except Exception as exc:
+            state = self.store.load(run_id) or state
+            if str(exc) != "stopped":
+                state["status"] = "failed"
+                state["phase"] = "finished"
+                state["error"] = str(exc)
+                self._event(state, "failed", str(exc))
 
     def resume(self, run_id: str) -> Dict[str, Any]:
         state = self.store.load(run_id)
@@ -1960,6 +2114,8 @@ class Orchestrator:
                             "parsed": None,
                             "error": "",
                             "worktree": "",
+                            "sent": False,
+                            "sent_at": "",
                         }
                     )
                     tasks.append(task)
@@ -2040,6 +2196,9 @@ class Orchestrator:
         task["parsed"] = result.get("parsed")
         task["error"] = result.get("error") or ""
         task["worktree"] = result.get("worktree") or ""
+        task["sent"] = bool(result.get("sent", task.get("sent", False)))
+        if task["sent"] and not task.get("sent_at"):
+            task["sent_at"] = now_iso()
         if result.get("fallback_used"):
             task["fallback_used"] = True
             task["fallback_session_id"] = result.get("session_id") or ""
@@ -2097,11 +2256,13 @@ class Orchestrator:
             output,
         )
         error_blob = (res.get("stderr_tail") or "") + "\n" + (res.get("stdout_tail") or "")
-        if res.get("status") == "failed" and (
+        active_writer = (
             "active writer" in error_blob.lower()
             or "thread-store conflict" in error_blob.lower()
             or "already has an active" in error_blob.lower()
-        ):
+        )
+        res["sent"] = not active_writer
+        if res.get("status") == "failed" and active_writer:
             # The Codex Desktop window owns the thread and refuses a second
             # writer. In that case its local queue is the safe path: it keeps
             # the same thread and waits for the Desktop daemon to run it.
@@ -2137,6 +2298,7 @@ class Orchestrator:
                     "parsed": parsed,
                     "error": "" if status != "failed" else "Codex queue turn failed: {}".format(json.dumps(turn.get("error") or {}, ensure_ascii=False)),
                     "queue_fallback": True,
+                    "sent": True,
                     "turn": turn,
                     "worker": task["worker"],
                     "task_id": task["task_id"],
@@ -2171,6 +2333,10 @@ class Orchestrator:
             effort=str(worker.get("effort") or "high"),
             fallback_title="{}•fallback".format(task["worker"]),
         )
+        err = str(res.get("error") or "").lower()
+        res["sent"] = bool(res.get("fallback_used")) or not (
+            "active write handle" in err or "already owned" in err
+        )
         res.update({"worker": task["worker"], "task_id": task["task_id"]})
         return res
 
@@ -2201,6 +2367,7 @@ class Orchestrator:
                 "worker": task["worker"],
                 "task_id": task["task_id"],
                 "worktree": worktree,
+                "sent": res.get("sent", True),
             }
         )
         return res
@@ -2453,6 +2620,7 @@ class App:
             "events": [],
             "last_results": None,
             "last_plan": None,
+            "planner_notes": [],
             "error": "",
             "result_dir": str(Path(self.cfg["data_dir"]) / "results" / run_id),
         }
@@ -2479,6 +2647,22 @@ class App:
             int(body.get("additional_rounds") or 1),
             str(body.get("instruction") or ""),
         )
+
+    def resume_interrupted(self, run_id: str, body: Dict[str, Any]) -> Dict[str, Any]:
+        return self.orch.resume_interrupted(run_id, str(body.get("message") or ""))
+
+    def add_planner_note(self, run_id: str, body: Dict[str, Any]) -> Dict[str, Any]:
+        state = self.store.load(run_id)
+        if not state:
+            raise StudioError("run not found")
+        text = str(body.get("text") or "").strip()
+        if not text:
+            raise StudioError("留言不能为空")
+        state.setdefault("planner_notes", []).append(
+            {"ts": now_iso(), "text": text}
+        )
+        self.store.save(state)
+        return state
 
 
 APP: Optional[App] = None
@@ -2589,6 +2773,16 @@ class Handler(BaseHTTPRequestHandler):
             if path.startswith("/api/runs/") and path.endswith("/continue"):
                 rid = path.split("/")[3]
                 st = APP.continue_run(rid, body)
+                self._json(st)
+                return
+            if path.startswith("/api/runs/") and path.endswith("/note"):
+                rid = path.split("/")[3]
+                st = APP.add_planner_note(rid, body)
+                self._json(st)
+                return
+            if path.startswith("/api/runs/") and path.endswith("/resume-interrupted"):
+                rid = path.split("/")[3]
+                st = APP.resume_interrupted(rid, body)
                 self._json(st)
                 return
             self._json({"error": "not found"}, 404)

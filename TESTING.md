@@ -23,6 +23,7 @@ Date: 2026-11-01
 - Run continuation UI — a saved completed record opened with the “继续这个记录” composer, rounds field and append button.
 - Codex active-writer observation — codex-02 failed with `thread-store conflict ... already has an active writer`; the new worker path detects this and falls back to the Codex desktop queue instead of losing the task.
 - DSH live-session fallback — resuming a live session (`worker1`) created a fresh session and returned `FALLBACK_OK` without closing or disturbing the open DSH conversation.
+- Resume-interrupted flow — a stopped run exposes only failed/blocked/stopped tasks; tasks that received the prompt get the quota-recovery continuation, while unsent tasks are re-sent with their original prompt; the action then re-enters the same Planner review loop.
 - Console suppression — all Codex, DSH Node and git subprocess launches now pass Windows `CREATE_NO_WINDOW`; the packaged desktop shell starts Python via `pythonw.exe`.
 - Windows desktop shell — generic Electron launched with `CodexStudio.exe`, started its bundled Python backend on an available local port, and opened the app window.
 - Windows portable zip — 494 MB folder packed to `CodexStudio-0.1.0-win-x64.zip` (186 MB) and verified to launch.

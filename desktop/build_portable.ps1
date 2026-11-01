@@ -43,9 +43,13 @@ Copy-Item (Join-Path $desktop "main.js") $app
 Copy-Item (Join-Path $desktop "package.json") $app
 Copy-Item (Join-Path $desktop "splash.html") $app
 Copy-Item (Join-Path $desktop "icon.png") $app
+Copy-Item (Join-Path $desktop "icon.ico") $app
+Copy-Item (Join-Path $desktop "shortcuts.ps1") $app
 Copy-Item $PythonRoot (Join-Path $app "python") -Recurse
 Copy-Item (Join-Path $desktop "README-portable.txt") $output
 Copy-Item (Join-Path $desktop "CodexStudio.cmd") $output
+Copy-Item (Join-Path $desktop "shortcuts.ps1") $output
+Copy-Item (Join-Path $desktop "icon.ico") $output
 
 Write-Host "Built: $output"
 Write-Host ("Size: {0:N0} MB" -f ((Get-ChildItem $output -Recurse -File | Measure-Object Length -Sum).Sum / 1MB))

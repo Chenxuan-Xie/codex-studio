@@ -879,9 +879,20 @@
     const canStop = !["done", "blocked", "failed", "stopped", "paused"].includes(run.status);
     const canContinue = ["done", "blocked", "failed", "stopped"].includes(run.status);
     const continueHtml = canContinue ? `<div class="continue-panel">
-      <div class="continue-head"><div><div class="panel-title">继续这个记录</div><div class="panel-sub">沿用同一个 Planner 和 Worker 池，追加若干轮。</div></div><span class="badge">R${esc(run.round || 0)}</span></div>
-      <textarea id="continueGoal" class="goal-input" placeholder="追加要求，例如：上一轮已完成初版，这一轮请验证边缘情况并补齐测试。"></textarea>
+      <div class="continue-head"><div><div class="panel-title">继续这个记录，并给 Planner 指令</div><div class="panel-sub">沿用同一个 Planner 和 Worker 池；Planner 会看到这条追加要求。</div></div><span class="badge">R${esc(run.round || 0)}</span></div>
+      <textarea id="continueGoal" class="goal-input" placeholder="例如：前面的规划是……；codex-01/codex-03 已经在执行，不要重复启动；请把 X 交给 Y，完成后回来验收。"></textarea>
       <div class="continue-foot"><span>追加 <input id="continueRounds" class="mini-input" type="number" min="1" max="20" value="2"> 轮</span><button id="continueRunBtn" class="primary-btn">追加运行</button></div>
+    </div>` : "";
+    const noteHtml = run.status === "running" || run.status === "paused" ? `<div class="continue-panel note-panel">
+      <div class="continue-head"><div><div class="panel-title">给 Planner 留话</div><div class="panel-sub">不会打断正在执行的 Worker；Planner 处理下一轮时会看到。</div></div><span class="badge">Queued note</span></div>
+      <textarea id="plannerNote" class="goal-input" placeholder="例如：前面的规划是……；两个任务已经在执行，请把 X 交给 Y，不要重复启动。"></textarea>
+      <div class="continue-foot"><span>${esc((run.planner_notes || []).length)} 条待读</span><button id="addPlannerNote" class="secondary-btn">留给 Planner</button></div>
+    </div>` : "";
+    const interruptedTasks = (run.tasks || []).filter((t) => ["failed", "blocked", "stopped", "interrupted"].includes(t.status));
+    const resumeHtml = interruptedTasks.length && !["running", "stopping", "paused"].includes(run.status) ? `<div class="continue-panel resume-panel">
+      <div class="continue-head"><div><div class="panel-title">恢复中断的任务</div><div class="panel-sub">只重跑失败、阻塞或停止的任务，不碰已完成的对话；完成后交给 Planner 检查。</div></div><span class="badge">${interruptedTasks.length} 个中断</span></div>
+      <div class="resume-note">已发出的任务会发送续跑指令：“前面因为额度问题中断，现在继续前面的任务……”；完全没有发出的任务会重发原始提示词，不会错误地续跑空对话。</div>
+      <div class="continue-foot"><span>${interruptedTasks.map((t) => esc(t.worker)).join(" · ")}</span><button id="resumeInterruptedBtn" class="primary-btn">恢复中断任务</button></div>
     </div>` : "";
     $("#main").innerHTML = `
       <div class="run-head">
@@ -906,6 +917,8 @@
       </div>
       ${run.error ? `<div class="notice">${esc(run.error)}</div>` : ""}
       ${continueHtml}
+      ${noteHtml}
+      ${resumeHtml}
       <div class="run-columns">
         <div>
           <div class="panel" style="margin-bottom:15px">
@@ -944,6 +957,40 @@
         showRun(next);
         startPolling(next.id);
       } catch (err) { toast(err.message); }
+    });
+    $("#resumeInterruptedBtn")?.addEventListener("click", async () => {
+      const btn = $("#resumeInterruptedBtn");
+      if (btn) { btn.disabled = true; btn.textContent = "恢复中..."; }
+      try {
+        const next = await api(`/api/runs/${encodeURIComponent(run.id)}/resume-interrupted`, {
+          method: "POST",
+          body: JSON.stringify({}),
+        });
+        state.run = next;
+        toast("已开始恢复中断任务；已完成的对话不会重跑。");
+        showRun(next, false);
+      } catch (err) {
+        toast(err.message);
+        if (btn) { btn.disabled = false; btn.textContent = "恢复中断任务"; }
+      }
+    });
+    $("#addPlannerNote")?.addEventListener("click", async () => {
+      const text = ($("#plannerNote")?.value || "").trim();
+      if (!text) return toast("写下要留给 Planner 的话");
+      const btn = $("#addPlannerNote");
+      if (btn) { btn.disabled = true; btn.textContent = "提交中..."; }
+      try {
+        const next = await api(`/api/runs/${encodeURIComponent(run.id)}/note`, {
+          method: "POST",
+          body: JSON.stringify({ text }),
+        });
+        state.run = next;
+        toast("已留给 Planner；当前 Worker 不受影响。");
+        showRun(next, false);
+      } catch (err) {
+        toast(err.message);
+        if (btn) { btn.disabled = false; btn.textContent = "留给 Planner"; }
+      }
     });
     $("#continueFocus")?.addEventListener("click", () => {
       const el = $("#continueGoal");

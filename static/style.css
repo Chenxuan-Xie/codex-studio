@@ -313,6 +313,9 @@ a { color: var(--accent); text-decoration: none; }
 .continue-panel { background: var(--panel); border: 1px solid var(--accent); border-radius: var(--radius); padding: 14px 16px; margin-bottom: 15px; box-shadow: var(--shadow); }
 .continue-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
 .continue-panel .goal-input { min-height: 74px; margin: 0; }
+.note-panel { border-color: var(--line-strong); box-shadow: none; background: var(--panel-2); }
+.resume-panel { border-color: #d8b4a4; background: #fffaf5; }
+.resume-note { color: var(--muted); font-size: 12px; line-height: 1.65; padding: 2px 0; }
 .continue-foot { display: flex; align-items: center; justify-content: flex-end; gap: 12px; margin-top: 9px; color: var(--muted); font-size: 11px; }
 .run-meta-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-bottom: 15px; }
 .meta-card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
